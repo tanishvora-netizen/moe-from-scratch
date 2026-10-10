@@ -1,0 +1,41 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Smoke test (Shakespeare, any machine)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/train.py",
+      "args": ["--name", "smoke", "--dataset", "shakespeare", "--steps", "200", "--batch_size", "16",
+               "--eval_interval", "100", "--eval_iters", "10", "--log_interval", "20", "--impl", "naive"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Train MoE: aux-loss-free (GPU)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/train.py",
+      "args": ["--name", "moe_aux_free", "--router", "aux_free"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Benchmark Triton kernel (GPU)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/benchmark.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Analyze experts",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/analyze_experts.py",
+      "args": ["--ckpt", "runs/moe_aux_free/ckpt.pt"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

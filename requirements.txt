@@ -1,0 +1,6 @@
+torch>=2.3        # on Linux, pip also installs a matching triton
+numpy
+datasets          # TinyStories download
+tiktoken          # only needed for --tokenizer gpt2
+matplotlib
+pytest
