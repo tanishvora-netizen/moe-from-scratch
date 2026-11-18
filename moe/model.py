@@ -11,6 +11,8 @@ from .router import Router
 
 
 class Block(nn.Module):
+    """Pre-norm transformer block: x + attn(norm(x)), then x + ffn(norm(x)). The FFN is MoE or dense."""
+
     def __init__(self, cfg: ModelConfig, layer_idx: int):
         super().__init__()
         self.norm1 = RMSNorm(cfg.d_model)
@@ -30,6 +32,13 @@ class Block(nn.Module):
 
 
 class MoETransformer(nn.Module):
+    """Decoder-only language model. With cfg.ffn_type="dense" it is the matched dense baseline.
+
+    forward(idx, targets=None) -> (logits, loss, info)
+      idx, targets: (B, T) token ids. loss is cross-entropy, plus the balance loss for router="aux_loss".
+      info: {"ce": cross-entropy, "aux": mean balance loss per MoE layer}, both detached, for logging.
+    """
+
     def __init__(self, cfg: ModelConfig):
         super().__init__()
         self.cfg = cfg
