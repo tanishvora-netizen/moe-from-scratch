@@ -5,10 +5,10 @@ kernel consumes, so the expert computation is identical across the ablation.
   aux_loss       token-choice top-k over a softmax + Switch/GShard balance loss
                  (Fedus et al. 2021; Lepikhin et al. 2020)
   aux_free       DeepSeek-V3 auxiliary-loss-free balancing: sigmoid affinities, a
-                 per-expert bias added ONLY for top-k selection, nudged after every
+                 per-expert bias that only affects top-k selection, nudged after every
                  step toward under-loaded experts (Wang et al. 2024; DeepSeek-V3)
   expert_choice  each expert picks its top-C tokens (Zhou et al. 2022). Perfectly
-                 balanced by construction, but NOT causal for a decoder LM: whether a
+                 balanced by construction, but not causal for a decoder LM: whether a
                  token is picked depends on other tokens in the batch, including future
                  ones. See eval_mode below and the README.
 """
@@ -81,8 +81,8 @@ class Router(nn.Module):
         T, E, k = logits.size(0), self.n_experts, self.top_k
         if strategy == "aux_free":
             scores = torch.sigmoid(logits)
-            _, topk_idx = (scores + self.expert_bias).topk(k, dim=-1)   # bias affects WHICH experts...
-            topk_w = scores.gather(-1, topk_idx)                        # ...but not the gate values
+            _, topk_idx = (scores + self.expert_bias).topk(k, dim=-1)   # bias changes which experts win
+            topk_w = scores.gather(-1, topk_idx)                        # gates still use the unbiased scores
         else:
             probs = logits.softmax(dim=-1)
             topk_w, topk_idx = probs.topk(k, dim=-1)

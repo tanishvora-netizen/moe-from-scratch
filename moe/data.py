@@ -8,7 +8,7 @@ Datasets -> flat token files (nanoGPT style).
 Tokenizers:
   byte  vocab 256, no dependencies. Keeps the model at ~7M params and makes the
         expert-specialization analysis very readable (spaces, vowels, punctuation...).
-  gpt2  tiktoken BPE, vocab 50257. NOTE: the tied embedding alone is ~12.9M params
+  gpt2  tiktoken BPE, vocab 50257. The tied embedding alone is ~12.9M params
         at d_model=256, so total params jump well past 10M.
 """
 import json

@@ -1,7 +1,7 @@
 """
 DeepSeek-MoE style layer:  y = SharedExpert(x) + sum_{e in topk(x)} g_e(x) * Expert_e(x)
 
-Routed expert weights are stored STACKED, (E, d, 2h) and (E, h, d), so the Triton
+Routed expert weights are stacked into (E, d, 2h) and (E, h, d) tensors so the Triton
 grouped GEMM can index them by expert id. The naive path uses the same tensors,
 which makes the two implementations exactly comparable (and checkpoint-compatible).
 """
@@ -91,7 +91,7 @@ class MoE(nn.Module):
         self.last_counts = r.counts.detach().float()
         if self.router.strategy == "expert_choice" and self.training:
             covered = torch.bincount(r.sorted_token, minlength=n_tokens)
-            self.last_dropped = (covered == 0).float().mean()   # tokens that got ZERO routed experts
+            self.last_dropped = (covered == 0).float().mean()   # tokens no expert picked
         else:
             self.last_dropped = None
         if self.record:

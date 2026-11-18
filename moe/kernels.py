@@ -8,7 +8,7 @@ After routing, every (token, expert) assignment i needs
 Assignments are sorted by expert, so expert e owns the contiguous row slice
 [offsets[e], offsets[e+1]). The naive implementation loops over experts in
 Python: a gather + 2-3 small GEMMs per expert = dozens of kernel launches per
-layer, most of them tiny. Here ALL experts run in ONE launch:
+layer, most of them tiny. Here all experts run in a single launch:
 
   * each program computes one BLOCK_M x BLOCK_N output tile,
   * tiles never straddle experts (a precomputed "tile schedule" maps each
