@@ -152,7 +152,13 @@ class MoETransformer(nn.Module):
 
 
 def load_checkpoint(path, device="cpu", impl=None):
-    ckpt = torch.load(path, map_location=device, weights_only=False)
+    """Rebuild a model from a ckpt.pt written by scripts/train.py. Returns (model, cfg, train args).
+
+    impl overrides the saved moe_impl, e.g. to load a GPU-trained checkpoint with impl="naive" on a laptop.
+    """
+    # The checkpoint only holds tensors and plain Python values, so the safe loader works
+    # and a downloaded checkpoint can't run arbitrary code through pickle.
+    ckpt = torch.load(path, map_location=device, weights_only=True)
     cfg_dict = dict(ckpt["config"])
     if impl is not None:
         cfg_dict["moe_impl"] = impl
