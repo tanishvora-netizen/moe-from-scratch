@@ -1,6 +1,6 @@
 """Generate text from a trained checkpoint.
 
-  python sample.py --ckpt runs/moe_aux_free/ckpt.pt --prompt "Once upon a time"
+  python scripts/sample.py --ckpt runs/moe_aux_free/ckpt.pt --prompt "Once upon a time"
 """
 import argparse
 from contextlib import nullcontext

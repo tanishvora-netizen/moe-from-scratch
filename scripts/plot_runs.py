@@ -1,6 +1,6 @@
 """Compare runs for the load-balancing ablation.
 
-  python plot_runs.py runs/dense runs/moe_aux_loss runs/moe_aux_free runs/moe_expert_choice
+  python scripts/plot_runs.py runs/dense runs/moe_aux_loss runs/moe_aux_free runs/moe_expert_choice
 """
 import argparse
 import json

@@ -1,7 +1,7 @@
 """
 Expert-specialization analysis: which tokens does each expert handle?
 
-  python analyze_experts.py --ckpt runs/moe_aux_free/ckpt.pt
+  python scripts/analyze_experts.py --ckpt runs/moe_aux_free/ckpt.pt
 
 Outputs (in <run>/analysis/):
   specialization.png  per-layer heatmap of lift = P(category | expert) / P(category)
