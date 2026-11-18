@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from data import get_batch, get_tokenizer, load_meta, load_split, prepare_dataset, sample_offsets
+from moe.data import get_batch, get_tokenizer, load_meta, load_split, prepare_dataset, sample_offsets
 from moe.config import ModelConfig
 from moe.model import MoETransformer
 
