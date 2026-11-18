@@ -1,6 +1,8 @@
 """Compare runs for the load-balancing ablation.
 
   python scripts/plot_runs.py runs/dense runs/moe_aux_loss runs/moe_aux_free runs/moe_expert_choice
+
+Saves a 3-panel plot and prints a Markdown table that can be pasted into the README as is.
 """
 import argparse
 import json
@@ -15,6 +17,11 @@ def load(run_dir):
     return [r for r in recs if "val_loss" in r], [r for r in recs if "train_loss" in r]
 
 
+def fmt(value, spec):
+    """'-' for metrics a run doesn't have (MaxVio for dense, causal eval for token-choice routers)."""
+    return "-" if value is None else format(value, spec)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("runs", nargs="+")
@@ -22,7 +29,8 @@ def main():
     args = ap.parse_args()
 
     fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(16, 4.5))
-    print(f"{'run':<22} | {'final val':>9} | {'causal val':>10} | {'MaxVio (last 10%)':>17} | {'tok/s':>8}")
+    table = ["| run | final val loss | causal val loss | MaxVio (last 10%) | tok/s (median) |",
+             "|---|---|---|---|---|"]
     for run in args.runs:
         name = Path(run).name
         evals, train = load(run)
@@ -33,11 +41,12 @@ def main():
         if "maxvio" in train[0]:
             a2.plot([r["step"] for r in train], [r["maxvio"] for r in train], label=name, alpha=0.8)
         tail = train[-max(1, len(train) // 10):]
-        mv = sum(r.get("maxvio", 0) for r in tail) / len(tail) if "maxvio" in tail[0] else float("nan")
+        mv = sum(r["maxvio"] for r in tail) / len(tail) if "maxvio" in tail[0] else None
         tps = sorted(r["tok_per_s"] for r in train)[len(train) // 2]
         a3.bar(name, tps / 1e3)
-        causal = evals[-1].get("val_loss_token_choice", float("nan"))
-        print(f"{name:<22} | {evals[-1]['val_loss']:>9.4f} | {causal:>10.4f} | {mv:>17.3f} | {tps:>8.0f}")
+        causal = evals[-1].get("val_loss_token_choice")
+        table.append(f"| {name} | {evals[-1]['val_loss']:.4f} | {fmt(causal, '.4f')} | {fmt(mv, '.3f')} | {tps:,.0f} |")
+    print("\n".join(table))
 
     a1.set(xlabel="step", ylabel="val loss (nats/token)", title="Validation loss")
     a2.set(xlabel="step", ylabel="MaxVio", title="Load imbalance (0 = perfect)", yscale="symlog")
