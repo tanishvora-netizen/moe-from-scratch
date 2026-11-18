@@ -100,8 +100,8 @@ def main():
         offsets = torch.nn.functional.pad(torch.bincount(expert, minlength=E).cumsum(0), (1, 0))
         A = torch.randn(M, d, device=dev, dtype=dtype)
         offs = offsets.tolist()
-        loop = lambda: torch.cat([A[offs[e]:offs[e + 1]] @ W[e] for e in range(E)])
-        tri = lambda: grouped_gemm(A, W, offsets)
+        loop = lambda A=A, offs=offs: torch.cat([A[offs[e]:offs[e + 1]] @ W[e] for e in range(E)])
+        tri = lambda A=A, offsets=offsets: grouped_gemm(A, W, offsets)
         torch.testing.assert_close(tri(), loop(), atol=2e-2, rtol=2e-2)
         t_loop, t_tri = bench(loop), bench(tri)
         print(f"    {T:>8} | {t_loop:>10.3f} | {t_tri:>8.3f} | {t_loop / t_tri:5.2f}x")
@@ -116,11 +116,11 @@ def main():
         x = torch.randn(T, cfg.d_model, device=dev, requires_grad=True)
         res = {}
         for name, m in [("naive", moe_n), ("triton", moe_t), ("dense", dense)]:
-            def fwd(m=m):
+            def fwd(m=m, x=x):
                 with torch.autocast("cuda", dtype=dtype):
                     return call(m, x)
 
-            def fwd_bwd(m=m):
+            def fwd_bwd(m=m, x=x):
                 with torch.autocast("cuda", dtype=dtype):
                     y = call(m, x)
                 y.float().sum().backward()
@@ -143,10 +143,10 @@ def main():
         import matplotlib.pyplot as plt
         sections = ["kernel", "layer_fwd", "layer_fwd_bwd"]
         fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-        for ax, sec in zip(axes, sections):
+        for ax, sec in zip(axes, sections, strict=True):
             for impl in sorted({r["impl"] for r in rows if r["section"] == sec}):
                 pts = [(r["tokens"], r["ms"]) for r in rows if r["section"] == sec and r["impl"] == impl]
-                ax.plot(*zip(*pts), marker="o", label=impl)
+                ax.plot(*zip(*pts, strict=True), marker="o", label=impl)
             ax.set(title=sec, xlabel="tokens", ylabel="ms", xscale="log", yscale="log")
             ax.legend()
             ax.grid(alpha=0.3)

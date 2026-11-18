@@ -63,7 +63,7 @@ def test_tile_schedule_covers_every_row_once():
     M, BM = sum(counts), 32
     expert, start, end = make_tile_schedule(offsets, M, block_m=BM)
     covered = torch.zeros(M, dtype=torch.long)
-    for e, s, t in zip(expert.tolist(), start.tolist(), end.tolist()):
+    for e, s, t in zip(expert.tolist(), start.tolist(), end.tolist(), strict=True):
         if s >= t:
             continue
         rows = torch.arange(s, min(s + BM, t))

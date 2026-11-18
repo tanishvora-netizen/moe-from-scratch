@@ -31,7 +31,7 @@ def test_triton_matches_naive(router):
         (y.pow(2).sum() + aux).backward()
         results.append((y.detach(), x.grad, m.w_gate_up.grad, m.w_down.grad, m.router.gate.weight.grad))
     tol = dict(atol=2e-2, rtol=2e-2) if DEVICE == "cuda" else dict(atol=1e-4, rtol=1e-4)
-    for a, b in zip(*results):
+    for a, b in zip(*results, strict=True):
         torch.testing.assert_close(a, b, **tol)
 
 
