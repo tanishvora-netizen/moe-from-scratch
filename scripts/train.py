@@ -144,15 +144,24 @@ def eval_record(model, args, val_data, val_offsets, device, ctx, step):
 
 
 def train_step(model, opt, scaler, args, train_data, rng, device, ctx, lr):
-    """One optimizer step with gradient accumulation. Returns the last micro-batch's (loss, info) and grad norm."""
+    """One optimizer step with gradient accumulation.
+
+    Returns (loss, info, grad_norm), with loss and info["ce"] / info["aux"] averaged over the micro-batches.
+    """
     for g in opt.param_groups:
         g["lr"] = lr
+    loss_sum = ce_sum = aux_sum = 0.0
     for _ in range(args.grad_accum):
         offsets = sample_offsets(rng, train_data, args.batch_size, args.seq_len)
         x, y = get_batch(train_data, offsets, args.seq_len, device)
         with ctx:
             _, loss, info = model(x, y)
         scaler.scale(loss / args.grad_accum).backward()
+        loss_sum += loss.detach()
+        ce_sum += info["ce"]
+        aux_sum += info["aux"]
+    n = args.grad_accum
+    loss, info = loss_sum / n, {"ce": ce_sum / n, "aux": aux_sum / n}
     scaler.unscale_(opt)
     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
     scaler.step(opt)
