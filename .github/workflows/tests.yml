@@ -4,21 +4,31 @@ on:
   push:
   pull_request:
 
+# a new push to the same branch cancels the run that's still going
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install (CPU-only PyTorch, Triton for its CPU interpreter)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install triton
-          pip install -e ".[dev]"
+          pip install -e ".[dev,plot]"
 
       - name: Lint
         run: ruff check .
