@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from data import DATA_ROOT, get_batch, get_tokenizer, load_split, sample_offsets
+from moe.data import DATA_ROOT, get_batch, get_tokenizer, load_split, sample_offsets
 from moe.model import load_checkpoint
 
 
