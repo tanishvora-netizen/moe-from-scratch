@@ -17,8 +17,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from moe.data import get_batch, get_tokenizer, load_meta, load_split, prepare_dataset, sample_offsets
 from moe.config import ModelConfig
+from moe.data import get_batch, get_tokenizer, load_meta, load_split, prepare_dataset, sample_offsets
 from moe.model import MoETransformer
 
 
@@ -105,15 +105,98 @@ def make_scaler(enabled):
 
 @torch.no_grad()
 def evaluate(model, val_data, val_offsets, seq_len, device, ctx):
+    """Mean cross-entropy on fixed validation windows, so numbers are comparable across runs."""
     model.eval()
     losses = []
-    for ix in val_offsets:                 # fixed windows -> numbers comparable across runs
+    for ix in val_offsets:
         x, y = get_batch(val_data, ix, seq_len, device)
         with ctx:
             _, _, info = model(x, y)
         losses.append(info["ce"].item())
     model.train()
     return float(np.mean(losses))
+
+
+def build_model(args, vocab_size, device):
+    """Model from the CLI flags. The dense FFN width defaults to the MoE's active FFN width."""
+    cfg = ModelConfig(
+        vocab_size=vocab_size, seq_len=args.seq_len, d_model=args.d_model,
+        n_layers=args.n_layers, n_heads=args.n_heads, dropout=args.dropout, ffn_type=args.ffn,
+        n_routed_experts=args.n_experts, expert_hidden=args.expert_hidden, top_k=args.top_k,
+        n_shared_experts=args.n_shared, first_k_dense=args.first_k_dense, router=args.router,
+        aux_loss_coef=args.aux_loss_coef, bias_update_rate=args.bias_update_rate,
+        capacity_factor=args.capacity_factor, moe_impl=args.impl,
+    )
+    cfg.dense_hidden = args.dense_hidden or cfg.matched_dense_hidden
+    return MoETransformer(cfg).to(device), cfg
+
+
+def eval_record(model, args, val_data, val_offsets, device, ctx, step):
+    """Validation loss for this step. Expert-choice runs also get a causal eval (see below)."""
+    rec = {"step": step, "val_loss": evaluate(model, val_data, val_offsets, args.seq_len, device, ctx)}
+    if args.ffn == "moe" and args.router == "expert_choice":
+        # Expert choice peeks at other tokens (incl. future ones) when routing, so its val loss
+        # is optimistic. Also report a causal eval that routes each token on its own (top-k).
+        model.set_router_eval_mode("token_choice")
+        rec["val_loss_token_choice"] = evaluate(model, val_data, val_offsets, args.seq_len, device, ctx)
+        model.set_router_eval_mode(None)
+    return rec
+
+
+def train_step(model, opt, scaler, args, train_data, rng, device, ctx, lr):
+    """One optimizer step with gradient accumulation. Returns the last micro-batch's (loss, info) and grad norm."""
+    for g in opt.param_groups:
+        g["lr"] = lr
+    for _ in range(args.grad_accum):
+        offsets = sample_offsets(rng, train_data, args.batch_size, args.seq_len)
+        x, y = get_batch(train_data, offsets, args.seq_len, device)
+        with ctx:
+            _, loss, info = model(x, y)
+        scaler.scale(loss / args.grad_accum).backward()
+    scaler.unscale_(opt)
+    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+    scaler.step(opt)
+    scaler.update()
+    opt.zero_grad(set_to_none=True)
+    model.update_router_biases()      # no-op unless router == aux_free
+    return loss, info, grad_norm
+
+
+def format_eval(rec):
+    msg = f"[eval] step {rec['step']:5d} | val_loss {rec['val_loss']:.4f}"
+    if "val_loss_token_choice" in rec:
+        msg += f" | causal (token-choice) val_loss {rec['val_loss_token_choice']:.4f}"
+    return msg
+
+
+def format_train(rec):
+    msg = f"step {rec['step']:5d} | ce {rec['ce']:.4f} | lr {rec['lr']:.2e} | {rec['tok_per_s'] / 1e3:.0f}k tok/s"
+    if "maxvio" in rec:
+        msg += f" | MaxVio {rec['maxvio']:.3f}"
+    if rec["aux"] > 0:
+        msg += f" | aux {rec['aux']:.3f}"
+    if "dropped_frac" in rec:
+        msg += f" | dropped {rec['dropped_frac']:.1%}"
+    return msg
+
+
+def save_checkpoint(model, cfg, args, step, run_dir):
+    torch.save({"model": model.state_dict(), "config": asdict(cfg), "args": vars(args), "step": step},
+               run_dir / "ckpt.pt")
+
+
+def write_sample(model, args, run_dir, device, ctx, max_new_tokens=400):
+    """Generate a short sample with causal routing and save it next to the checkpoint."""
+    tok = get_tokenizer(args.tokenizer)
+    model.eval()
+    model.set_router_eval_mode("token_choice")   # only affects expert-choice models
+    prompt = "ROMEO:" if args.dataset == "shakespeare" and not args.data_dir else "Once upon a time"
+    idx = torch.tensor([tok.encode(prompt)], device=device)
+    with ctx:
+        out = model.generate(idx, max_new_tokens=max_new_tokens)
+    text = tok.decode(out[0].tolist())
+    (run_dir / "sample.txt").write_text(text)
+    return text
 
 
 def main():
@@ -135,110 +218,55 @@ def main():
     meta = load_meta(data_dir)
     args.tokenizer = meta["tokenizer"]   # the data decides the tokenizer, not the flag
     train_data, val_data = load_split(data_dir, "train"), load_split(data_dir, "val")
+    val_rng = np.random.default_rng(0)
+    val_offsets = [sample_offsets(val_rng, val_data, args.batch_size, args.seq_len) for _ in range(args.eval_iters)]
 
-    # ---- model ----
-    cfg = ModelConfig(
-        vocab_size=meta["vocab_size"], seq_len=args.seq_len, d_model=args.d_model,
-        n_layers=args.n_layers, n_heads=args.n_heads, dropout=args.dropout, ffn_type=args.ffn,
-        n_routed_experts=args.n_experts, expert_hidden=args.expert_hidden, top_k=args.top_k,
-        n_shared_experts=args.n_shared, first_k_dense=args.first_k_dense, router=args.router,
-        aux_loss_coef=args.aux_loss_coef, bias_update_rate=args.bias_update_rate,
-        capacity_factor=args.capacity_factor, moe_impl=args.impl,
-    )
-    cfg.dense_hidden = args.dense_hidden or cfg.matched_dense_hidden
-    model = MoETransformer(cfg).to(device)
+    # ---- model + run directory ----
+    model, cfg = build_model(args, meta["vocab_size"], device)
     total, active = model.num_params()
-    is_moe = args.ffn == "moe"
-
-    name = args.name or (f"moe_{args.router}" if is_moe else "dense")
+    name = args.name or (f"moe_{args.router}" if args.ffn == "moe" else "dense")
     run_dir = Path(args.out_dir) / name
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.json").write_text(json.dumps({"model": asdict(cfg), "args": vars(args)}, indent=2))
-    print(f"[run] {name} | device={device} dtype={dtype} impl={args.impl if is_moe else '-'}")
+    print(f"[run] {name} | device={device} dtype={dtype} impl={args.impl if args.ffn == 'moe' else '-'}")
     print(f"[run] params: total={total / 1e6:.2f}M  active/token={active / 1e6:.2f}M")
 
     opt = model.configure_optimizer(args.weight_decay, args.lr, device)
     scaler = make_scaler(dtype == torch.float16)
-    log_f = open(run_dir / "metrics.jsonl", "w")
-
-    def log(rec):
-        log_f.write(json.dumps(rec) + "\n")
-        log_f.flush()
-
-    val_rng = np.random.default_rng(0)
-    val_offsets = [sample_offsets(val_rng, val_data, args.batch_size, args.seq_len) for _ in range(args.eval_iters)]
     tokens_per_step = args.batch_size * args.grad_accum * args.seq_len
 
-    t0, steps_since = time.time(), 0
-    for step in range(args.steps + 1):
-        # ---- eval + checkpoint ----
-        if step % args.eval_interval == 0 or step == args.steps:
-            rec = {"step": step, "val_loss": evaluate(model, val_data, val_offsets, args.seq_len, device, ctx)}
-            msg = f"[eval] step {step:5d} | val_loss {rec['val_loss']:.4f}"
-            if is_moe and args.router == "expert_choice":
-                # Expert choice peeks at other tokens (incl. future ones) when routing. Also
-                # report a causal eval that routes each token on its own (top-k per token).
-                model.set_router_eval_mode("token_choice")
-                rec["val_loss_token_choice"] = evaluate(model, val_data, val_offsets, args.seq_len, device, ctx)
-                model.set_router_eval_mode(None)
-                msg += f" | causal (token-choice) val_loss {rec['val_loss_token_choice']:.4f}"
-            print(msg)
-            log(rec)
-            torch.save({"model": model.state_dict(), "config": asdict(cfg), "args": vars(args), "step": step},
-                       run_dir / "ckpt.pt")
-            t0, steps_since = time.time(), 0
-        if step == args.steps:
-            break
+    with open(run_dir / "metrics.jsonl", "w") as log_f:
+        def log(rec):
+            log_f.write(json.dumps(rec) + "\n")
+            log_f.flush()
 
-        # ---- train step ----
-        lr = lr_at(step, args)
-        for g in opt.param_groups:
-            g["lr"] = lr
-        for _ in range(args.grad_accum):
-            x, y = get_batch(train_data, sample_offsets(rng, train_data, args.batch_size, args.seq_len),
-                             args.seq_len, device)
-            with ctx:
-                _, loss, info = model(x, y)
-            scaler.scale(loss / args.grad_accum).backward()
-        scaler.unscale_(opt)
-        gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-        scaler.step(opt)
-        scaler.update()
-        opt.zero_grad(set_to_none=True)
-        model.update_router_biases()      # no-op unless router == aux_free
-        steps_since += 1
+        t0, steps_since = time.time(), 0
+        for step in range(args.steps + 1):
+            if step % args.eval_interval == 0 or step == args.steps:
+                rec = eval_record(model, args, val_data, val_offsets, device, ctx, step)
+                print(format_eval(rec))
+                log(rec)
+                save_checkpoint(model, cfg, args, step, run_dir)
+                t0, steps_since = time.time(), 0   # don't count eval time in throughput
+            if step == args.steps:
+                break
 
-        if step % args.log_interval == 0:
-            if device == "cuda":
-                torch.cuda.synchronize()
-            dt = time.time() - t0
-            rec = {"step": step, "train_loss": loss.item(), "ce": info["ce"].item(), "aux": info["aux"].item(),
-                   "lr": lr, "grad_norm": float(gnorm), "tok_per_s": tokens_per_step * steps_since / dt}
-            rec.update(model.routing_stats())
-            msg = (f"step {step:5d} | ce {rec['ce']:.4f} | lr {lr:.2e} | "
-                   f"{rec['tok_per_s'] / 1e3:.0f}k tok/s")
-            if "maxvio" in rec:
-                msg += f" | MaxVio {rec['maxvio']:.3f}"
-            if args.router == "aux_loss" and is_moe:
-                msg += f" | aux {rec['aux']:.3f}"
-            if "dropped_frac" in rec:
-                msg += f" | dropped {rec['dropped_frac']:.1%}"
-            print(msg)
-            log(rec)
-            t0, steps_since = time.time(), 0
+            lr = lr_at(step, args)
+            loss, info, grad_norm = train_step(model, opt, scaler, args, train_data, rng, device, ctx, lr)
+            steps_since += 1
 
-    # ---- sample ----
-    tok = get_tokenizer(args.tokenizer)
-    model.eval()
-    model.set_router_eval_mode("token_choice")   # only affects expert-choice models
-    prompt = "Once upon a time" if args.dataset == "tinystories" else "ROMEO:"
-    idx = torch.tensor([tok.encode(prompt)], device=device)
-    with ctx:
-        out = model.generate(idx, max_new_tokens=400)
-    text = tok.decode(out[0].tolist())
-    (run_dir / "sample.txt").write_text(text)
-    print("\n----- sample -----\n" + text)
-    log_f.close()
+            if step % args.log_interval == 0:
+                if device == "cuda":
+                    torch.cuda.synchronize()
+                rec = {"step": step, "train_loss": loss.item(), "ce": info["ce"].item(), "aux": info["aux"].item(),
+                       "lr": lr, "grad_norm": float(grad_norm),
+                       "tok_per_s": tokens_per_step * steps_since / (time.time() - t0)}
+                rec.update(model.routing_stats())
+                print(format_train(rec))
+                log(rec)
+                t0, steps_since = time.time(), 0
+
+    print("\n----- sample -----\n" + write_sample(model, args, run_dir, device, ctx))
 
 
 if __name__ == "__main__":
