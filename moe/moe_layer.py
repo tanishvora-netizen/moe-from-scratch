@@ -58,7 +58,7 @@ class MoE(nn.Module):
     # ------------------------------------------------------------------------------------------
     def _experts_triton(self, x, r: Routing):
         """All routed experts in two kernel launches (one per matmul), gather fused into the first."""
-        from .kernels import grouped_gemm   # lazy import: the naive path works without Triton
+        from .kernels import grouped_gemm  # lazy import: the naive path works without Triton
         h = grouped_gemm(x, self.w_gate_up, r.offsets, r.sorted_token)   # (M, 2h), gather fused
         g, u = h.chunk(2, dim=-1)
         a = F.silu(g) * u

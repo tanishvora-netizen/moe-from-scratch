@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 
 
 def load(run_dir):
-    recs = [json.loads(l) for l in (Path(run_dir) / "metrics.jsonl").read_text().splitlines() if l.strip()]
+    lines = (Path(run_dir) / "metrics.jsonl").read_text().splitlines()
+    recs = [json.loads(line) for line in lines if line.strip()]
     return [r for r in recs if "val_loss" in r], [r for r in recs if "train_loss" in r]
 
 
