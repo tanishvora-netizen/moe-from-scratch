@@ -14,6 +14,15 @@ from .router import Router, Routing
 
 
 class MoE(nn.Module):
+    """Mixture-of-Experts feed-forward layer.
+
+    forward(x): x is (..., d_model). Returns (y, aux_loss), y with the same shape as x.
+      1. the router assigns each token to experts (see router.Routing for the layout)
+      2. every routed expert runs a small SwiGLU on its tokens (Triton kernel or Python loop)
+      3. each expert's output is scaled by its gate weight and added back to its token
+      4. the shared experts run on every token and are added on top
+    """
+
     def __init__(self, cfg):
         super().__init__()
         E, d, h = cfg.n_routed_experts, cfg.d_model, cfg.expert_hidden
@@ -48,6 +57,7 @@ class MoE(nn.Module):
 
     # ------------------------------------------------------------------------------------------
     def _experts_triton(self, x, r: Routing):
+        """All routed experts in two kernel launches (one per matmul), gather fused into the first."""
         from .kernels import grouped_gemm   # lazy import: the naive path works without Triton
         h = grouped_gemm(x, self.w_gate_up, r.offsets, r.sorted_token)   # (M, 2h), gather fused
         g, u = h.chunk(2, dim=-1)

@@ -21,6 +21,17 @@ import torch.nn.functional as F
 
 @dataclass
 class Routing:
+    """Which tokens go to which experts, in the layout the expert kernels want.
+
+    Every (token, expert) pair is one "assignment"; with top-k routing there are M = T * k.
+    Assignments are sorted by expert, so each expert's rows are one contiguous slice.
+    Example with 3 tokens, 2 experts, k = 1, tokens 0 and 2 -> expert 1, token 1 -> expert 0:
+
+        sorted_token  = [1, 0, 2]
+        sorted_expert = [0, 1, 1]
+        offsets       = [0, 1, 3]     # expert 0 owns rows [0, 1), expert 1 owns rows [1, 3)
+    """
+
     sorted_token: torch.Tensor   # (M,)  token index of each assignment, grouped by expert
     sorted_expert: torch.Tensor  # (M,)  expert id of each assignment (non-decreasing)
     sorted_weight: torch.Tensor  # (M,)  gate weight (differentiable)
@@ -30,6 +41,12 @@ class Routing:
 
 
 class Router(nn.Module):
+    """Scores every token against every routed expert and decides the assignments.
+
+    The scoring is one linear layer (d_model -> n_experts). The strategy (cfg.router)
+    decides how scores become assignments and how load is kept balanced.
+    """
+
     def __init__(self, cfg):
         super().__init__()
         self.n_experts = cfg.n_routed_experts
@@ -45,6 +62,7 @@ class Router(nn.Module):
         self.eval_mode = None
 
     def forward(self, x: torch.Tensor) -> Routing:
+        """x: (T, d_model) flattened tokens -> Routing for this batch."""
         # Router math in fp32 even under autocast (small, and precision matters for top-k).
         ac_device = x.device.type if x.device.type in ("cuda", "cpu") else "cpu"
         with torch.autocast(device_type=ac_device, enabled=False):
@@ -58,7 +76,8 @@ class Router(nn.Module):
         return self._token_choice(logits, strategy)
 
     # ------------------------------------------------------------------------------------------
-    def _token_choice(self, logits, strategy):
+    def _token_choice(self, logits: torch.Tensor, strategy: str) -> Routing:
+        """Each token picks its top-k experts (aux_loss, aux_free, and causal eval of expert_choice)."""
         T, E, k = logits.size(0), self.n_experts, self.top_k
         if strategy == "aux_free":
             scores = torch.sigmoid(logits)
@@ -92,7 +111,8 @@ class Router(nn.Module):
             aux_loss=aux,
         )
 
-    def _expert_choice(self, logits):
+    def _expert_choice(self, logits: torch.Tensor) -> Routing:
+        """Each expert picks its top-C tokens, C = capacity_factor * T * k / E. Some tokens may get none."""
         T, E = logits.shape
         probs = logits.softmax(dim=-1)                                   # (T, E)
         cap = int(self.capacity_factor * T * self.top_k / E)
