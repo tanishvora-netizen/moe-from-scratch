@@ -1,126 +1,175 @@
-# MoE from scratch: DeepSeek-style experts + a custom Triton kernel
+# MoE from scratch
 
-A ~7M-parameter Mixture-of-Experts transformer written from scratch in PyTorch, with:
+[![tests](https://github.com/tanishvora-netizen/moe-from-scratch/actions/workflows/tests.yml/badge.svg)](https://github.com/tanishvora-netizen/moe-from-scratch/actions/workflows/tests.yml)
 
-- **DeepSeek-MoE architecture**: 16 fine-grained routed experts (top-4) plus 2 always-on shared experts per layer
-- **A custom Triton grouped-GEMM kernel** (forward *and* backward) that runs all experts in one launch, benchmarked against a naive Python loop and a matched dense baseline
-- **A load-balancing ablation**: Switch-style auxiliary loss vs DeepSeek-V3 auxiliary-loss-free bias vs expert-choice routing
-- **Expert-specialization analysis**: which tokens each expert ends up handling
+A small Mixture-of-Experts (MoE) language model built from scratch in PyTorch, with a custom Triton GPU kernel
+and an experiment comparing three ways to keep the experts load-balanced.
+
+- **Model:** a ~7M-parameter decoder in the DeepSeek-MoE style: 16 small routed experts per layer (each token
+  uses 4) plus 2 shared experts that every token uses.
+- **Kernel:** a Triton grouped-GEMM kernel, forward and backward, that runs all 16 experts in one launch
+  instead of a Python loop over experts.
+- **Experiment:** Switch-style auxiliary loss vs DeepSeek-V3's auxiliary-loss-free bias vs expert-choice
+  routing, compared against a dense model that does the same compute per token.
+- **Analysis:** which tokens each expert ends up specializing in.
+
+## How an MoE layer works
+
+A normal transformer layer sends every token through one feed-forward network (FFN). An MoE layer replaces it
+with many small FFNs ("experts") and a router that sends each token to only a few of them. The model gets more
+total parameters while the compute per token stays the same.
+
+```mermaid
+flowchart LR
+    x[token] --> R[router]
+    R -->|top 4 of 16| E[routed experts]
+    x --> S[2 shared experts]
+    E --> W[weighted sum]
+    S --> W
+    W --> y[next layer]
+```
+
+The hard part is **load balancing**: left alone, the router sends most tokens to a few favorite experts and the
+rest never learn. This repo compares three fixes for that.
 
 | | MoE (default) | Dense baseline |
 |---|---|---|
 | d_model / layers / heads | 256 / 6 / 8 | 256 / 6 / 8 |
-| FFN | 16 routed experts (h=64), top-4, + 2 shared experts | SwiGLU, h=384 |
+| FFN | 16 routed experts (hidden 64), top-4, + 2 shared | SwiGLU, hidden 384 |
 | Total params | ~7.0M | ~3.4M |
-| Active params / token | ~3.4M | ~3.4M |
+| Active params per token | ~3.4M | ~3.4M |
 
-The dense FFN width is chosen so both models do the same compute per token. That way the comparison isolates what the extra (inactive) expert capacity buys you.
+The dense FFN width is chosen so both models do the same compute per token, so the comparison isolates what the
+extra (inactive) expert capacity buys.
+
+## Quick start
+
+Works on any machine. The Triton kernel needs an NVIDIA GPU, and everything else falls back to plain PyTorch.
+
+```bash
+git clone https://github.com/tanishvora-netizen/moe-from-scratch.git
+cd moe-from-scratch
+pip install -e ".[all]"
+
+pytest -q   # kernel + model tests; without a GPU the kernel runs in Triton's CPU interpreter
+python scripts/train.py --dataset shakespeare --steps 200 --batch_size 16 --eval_interval 100 --impl naive
+```
+
+## Full experiment (one GPU)
+
+Any single A10 / L4 / 4090 / A100 / H100 is enough.
+
+```bash
+pip install -e ".[all]"
+python scripts/benchmark.py        # Triton vs naive loop vs dense: correctness + timings
+bash scripts/run_ablations.sh      # dense + 3 routers, then comparison plot and expert analysis
+```
+
+Or one run at a time:
+
+```bash
+python scripts/train.py --name dense             --ffn dense
+python scripts/train.py --name moe_aux_loss      --router aux_loss
+python scripts/train.py --name moe_aux_free      --router aux_free
+python scripts/train.py --name moe_expert_choice --router expert_choice
+python scripts/plot_runs.py runs/dense runs/moe_aux_loss runs/moe_aux_free runs/moe_expert_choice
+python scripts/analyze_experts.py --ckpt runs/moe_aux_free/ckpt.pt
+python scripts/sample.py --ckpt runs/moe_aux_free/ckpt.pt --prompt "Once upon a time"
+```
+
+Defaults: TinyStories (first 200 MB), byte-level tokens, sequence length 256, batch 64, 5000 steps (~82M tokens),
+AdamW with a cosine schedule, bf16 autocast. Use `--data_dir` to train on any pre-tokenized directory.
 
 ## Project layout
 
 ```
 moe/
-  config.py       all hyperparameters (ModelConfig)
-  layers.py       RMSNorm, RoPE causal attention, SwiGLU
-  router.py       aux_loss / aux_free / expert_choice routing -> sorted (token, expert) layout
-  kernels.py      Triton grouped-GEMM kernels + autograd Function   <- the custom kernel
-  moe_layer.py    MoE layer: naive loop path and Triton path, same weights
-  model.py        full transformer, param counting, checkpoint loading
-data.py           Shakespeare / TinyStories download + byte or GPT-2 tokenization
-train.py          training loop, logs loss + load-balance metrics to runs/<name>/metrics.jsonl
-benchmark.py      correctness check + kernel/layer timings (naive vs Triton vs dense)
-analyze_experts.py  expert specialization heatmaps + mutual-information score
-plot_runs.py      ablation comparison plot
-sample.py         generate text from a checkpoint
-tests/            kernel and layer correctness tests (run on CPU via the Triton interpreter)
-scripts/          smoke_test.sh, run_ablations.sh
+  config.py      all hyperparameters (ModelConfig)
+  layers.py      RMSNorm, causal attention with RoPE, SwiGLU
+  router.py      the three routing strategies -> one shared (token, expert) layout
+  kernels.py     Triton grouped-GEMM kernels + autograd wrapper
+  moe_layer.py   the MoE layer, with a Triton path and a naive reference path
+  model.py       full transformer, parameter counting, checkpoint loading
+  data.py        Shakespeare / TinyStories download and tokenization
+scripts/
+  train.py             training loop; logs to runs/<name>/metrics.jsonl
+  benchmark.py         correctness check + timings: naive vs Triton vs dense
+  analyze_experts.py   expert specialization heatmaps + mutual-information score
+  plot_runs.py         ablation comparison plot
+  sample.py            generate text from a checkpoint
+  run_ablations.sh     the full experiment
+  smoke_test.sh        one-minute check on any machine
+tests/           kernel, layer, and end-to-end training tests (run in CI on every push)
 ```
-
-## 1. Open it in VS Code
-
-1. Unzip, then **File → Open Folder…** and pick `moe-from-scratch`.
-2. Open a terminal (**Ctrl+`**) and create an environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate          # Windows: .venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-3. **Ctrl+Shift+P → "Python: Select Interpreter"** → choose `.venv`.
-4. The Run and Debug panel already has launch configs (smoke test, train, benchmark, analyze), and the Testing panel picks up `tests/`.
-
-> Triton only runs on Linux with an NVIDIA GPU. On a Mac or Windows laptop, everything except the Triton path still works: use `--impl naive` locally, and do the real runs on a rented GPU (section 3).
-
-## 2. Smoke test (any machine, ~1 min)
-
-```bash
-pytest -q                     # kernel tests run in Triton's CPU interpreter if there's no GPU (needs triton installed)
-python train.py --name smoke --dataset shakespeare --steps 200 --batch_size 16 --eval_interval 100 --impl naive
-```
-
-## 3. Real runs on a rented GPU
-
-Any single A10 / L4 / 4090 / A100 / H100 is plenty (RunPod, Lambda, Vast all work).
-
-1. In VS Code, install the **Remote - SSH** extension, then **Ctrl+Shift+P → "Remote-SSH: Connect to Host…"** and paste the SSH command your provider gives you.
-2. Get the code onto the box: push this folder to GitHub and `git clone` it there, or drag the folder into the remote VS Code explorer.
-3. On the box:
-   ```bash
-   pip install -r requirements.txt
-   pytest -q                         # kernel vs PyTorch reference on the real GPU
-   python benchmark.py               # Triton vs naive vs dense
-   bash scripts/run_ablations.sh     # all 4 training runs + plots + analysis
-   ```
-
-Individual commands:
-
-```bash
-python train.py --name dense             --ffn dense
-python train.py --name moe_aux_loss      --router aux_loss
-python train.py --name moe_aux_free      --router aux_free
-python train.py --name moe_expert_choice --router expert_choice
-python plot_runs.py runs/dense runs/moe_aux_loss runs/moe_aux_free runs/moe_expert_choice
-python analyze_experts.py --ckpt runs/moe_aux_free/ckpt.pt
-python sample.py --ckpt runs/moe_aux_free/ckpt.pt --prompt "Once upon a time"
-```
-
-Defaults: TinyStories (first 200 MB), byte-level tokens, seq_len 256, batch 64, 5000 steps (~82M tokens), AdamW with cosine LR, bf16 autocast.
 
 ## How the Triton kernel works
 
-After routing, each token has k (token, expert) assignments. The MoE forward pass is:
+After routing, each token has k (token, expert) assignments. The expert computation is:
 
 ```
-router  ->  sort assignments by expert  ->  grouped GEMM #1 (x @ W_gate_up[e], gather fused)
-        ->  SwiGLU  ->  grouped GEMM #2 (@ W_down[e])  ->  multiply by gate, scatter-add to tokens
+router -> sort assignments by expert -> grouped GEMM #1 (x @ W_gate_up[e], gather fused)
+       -> SwiGLU -> grouped GEMM #2 (@ W_down[e]) -> scale by gate weight, add back to each token
 ```
 
-**Naive version** (`moe_impl="naive"`): a Python loop over experts, each doing a gather, two small matmuls and a scatter. With 16 experts that adds up to over a hundred small kernel launches per layer, plus a host sync. The individual matmuls are tiny, so the GPU sits mostly idle.
+**Naive path** (`--impl naive`): a Python loop over experts, each doing a gather, two small matmuls and a
+scatter. With 16 experts that's over a hundred small kernel launches per layer plus a host sync, and the GPU
+mostly sits idle.
 
-**Triton version** (`moe/kernels.py`): one kernel launch covers every expert.
-- Each program computes a 64-row × BLOCK_N output tile. A tile never crosses an expert boundary, so it only loads one expert's weights.
-- A **tile schedule** maps each tile to (expert, row range). It's built with `searchsorted` on the GPU and launched with an upper bound of tiles, so there is **no host sync**. Surplus tiles exit immediately.
-- The **gather is fused**: tiles load token rows straight from the un-permuted activations via `row_idx`, so the permuted copy is never written to memory.
-- **Backward is also Triton**: `dX` reuses the same kernel with the weights read transposed through strides; `dW[e] = Xₑᵀ dYₑ` uses a second kernel that reduces over each expert's rows.
-- BLOCK_N / BLOCK_K / warps / stages are autotuned per shape.
+**Triton path** (`moe/kernels.py`): one launch covers every expert.
 
-Ideas if you want to push the kernel further: fuse SwiGLU into GEMM #1's epilogue, fuse the gate-multiply + scatter-add into GEMM #2's epilogue (atomic adds), or make it a persistent kernel.
+- Each program computes a 64-row × BLOCK_N output tile. Tiles never cross an expert boundary, so each tile loads
+  only one expert's weights.
+- A **tile schedule** maps each tile to (expert, row range). It is built on the GPU with `searchsorted` and
+  launched with an upper bound on the tile count, so there is **no host sync**. Extra tiles exit immediately.
+- The **gather is fused**: tiles read token rows straight from the un-permuted activations, so the permuted
+  copy is never written to memory.
+- **Backward is Triton too:** `dX` reuses the forward kernel with the weights read transposed through strides,
+  and `dW[e] = Xₑᵀ dYₑ` uses a second kernel that reduces over each expert's rows.
+- Block sizes, warps and stages are autotuned per shape.
 
-## The load-balancing ablation
+## The load-balancing experiment
 
-| `--router` | How it balances | Paper |
+| `--router` | How it balances | Source |
 |---|---|---|
-| `aux_loss` | softmax top-k + loss `E · Σ fₑ·Pₑ` (coef 0.01) | Switch Transformer / GShard |
-| `aux_free` | sigmoid scores; a per-expert bias is added **only for picking** experts and nudged by `±γ` each step toward under-loaded experts; no extra loss term | DeepSeek-V3 (Wang et al. 2024) |
-| `expert_choice` | each expert picks its top-C tokens, so load is perfectly balanced by construction | Zhou et al. 2022 |
+| `aux_loss` | softmax top-k, plus a loss `E · Σ fₑ·Pₑ` (weight 0.01) that penalizes uneven load | Switch Transformer / GShard |
+| `aux_free` | sigmoid scores; a per-expert bias is added **only when picking** experts and nudged by ±γ each step toward under-loaded experts; no extra loss | DeepSeek-V3 |
+| `expert_choice` | each expert picks its top-C tokens, so load is perfectly even by construction | Zhou et al. 2022 |
 
-**Important caveat for expert choice in a language model:** whether a token gets picked depends on the scores of the *other* tokens in the batch, including tokens later in the same sequence. Training is therefore not strictly causal, and its validation loss can look better than it really is. To make this visible, `train.py` also logs `val_loss_token_choice` for expert-choice runs, which re-evaluates the same model with causal per-token top-k routing. The gap between the two numbers is a nice finding to put in your writeup.
+**Caveat for expert choice in a language model:** whether a token gets picked depends on the scores of the
+*other* tokens in the batch, including later ones in the same sequence. Training is not strictly causal, so
+its validation loss looks better than it really is. `train.py` also logs `val_loss_token_choice` for these runs,
+which re-evaluates the same model with causal per-token top-k routing. The gap between the two numbers measures
+how much the model was "peeking".
 
-### Metrics logged (runs/&lt;name&gt;/metrics.jsonl)
+Logged to `runs/<name>/metrics.jsonl`:
 
-- `val_loss` (and `val_loss_token_choice` for expert choice), measured on fixed validation windows so runs are directly comparable
-- `maxvio` = (max expert load − mean load) / mean load, averaged over layers (0 = perfectly balanced). This is the metric used in the aux-loss-free paper.
+- `val_loss` (and `val_loss_token_choice` for expert choice), on fixed validation windows so runs are comparable
+- `maxvio` = (max expert load − mean load) / mean load, averaged over layers (0 = perfectly balanced), the
+  metric used in the auxiliary-loss-free paper
 - `loads`: per-layer expert load fractions
-- `dropped_frac` (expert choice only): fraction of tokens that got zero routed experts
+- `dropped_frac` (expert choice only): fraction of tokens that got no routed expert
 - `tok_per_s`: training throughput
 
-`analyze_experts.py` adds **normalized mutual information** I(token; expert) / H(expert) per layer, a single "how specialized are the experts" number to compare across routers. With byte-level tokens the heatmaps are easy to read: watch for experts that specialize in spaces, vowels, capitals, or punctuation.
+`analyze_experts.py` adds a normalized mutual information score, I(token; expert) / H(expert), per layer: one
+"how specialized are the experts" number to compare across routers. With byte-level tokens the heatmaps are easy
+to read: look for experts that specialize in spaces, vowels, capitals or punctuation.
+
+## Status and next steps
+
+- [x] Model, three routers, Triton forward + backward kernels, naive reference path
+- [x] Tests: kernel vs PyTorch reference, Triton vs naive layer, end-to-end training (CI on every push)
+- [ ] Full ablation on a GPU, with results and plots added here
+- [ ] Expert-specialization analysis of the trained checkpoints
+- [ ] Kernel: fuse SwiGLU into GEMM #1's epilogue, and the gate-scale + scatter-add into GEMM #2's
+- [ ] Try the auxiliary-loss-free bias trick outside MoE, e.g. to balance slot usage in learned hash-table
+      encoders, where many inputs competing for the same slot is the same problem as tokens piling onto one expert
+
+## References
+
+- Fedus, Zoph, Shazeer. [Switch Transformers](https://arxiv.org/abs/2101.03961). 2021.
+- Lepikhin et al. [GShard](https://arxiv.org/abs/2006.16668). 2020.
+- Dai et al. [DeepSeekMoE](https://arxiv.org/abs/2401.06066). 2024.
+- Wang et al. [Auxiliary-Loss-Free Load Balancing Strategy for Mixture-of-Experts](https://arxiv.org/abs/2408.15664). 2024.
+- DeepSeek-AI. [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437). 2024.
+- Zhou et al. [Mixture-of-Experts with Expert Choice Routing](https://arxiv.org/abs/2202.09368). 2022.
+- Eldan, Li. [TinyStories](https://arxiv.org/abs/2305.07759). 2023.
