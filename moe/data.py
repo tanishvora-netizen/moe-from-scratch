@@ -89,9 +89,15 @@ def _tinystories_docs(split, max_bytes):
             break
 
 
-def prepare_dataset(dataset="tinystories", tokenizer="byte", max_mb=200) -> Path:
+def dataset_dir(dataset="tinystories", tokenizer="byte", max_mb=200) -> Path:
+    """Where a prepared (dataset, tokenizer) pair is cached: <repo>/data/<dataset>_<tokenizer>[_<N>mb]."""
     suffix = f"_{max_mb}mb" if dataset == "tinystories" else ""
-    out = DATA_ROOT / f"{dataset}_{tokenizer}{suffix}"
+    return DATA_ROOT / f"{dataset}_{tokenizer}{suffix}"
+
+
+def prepare_dataset(dataset="tinystories", tokenizer="byte", max_mb=200) -> Path:
+    """Download and tokenize a dataset once; later calls return the cached directory."""
+    out = dataset_dir(dataset, tokenizer, max_mb)
     if (out / "meta.json").exists():
         return out
     out.mkdir(parents=True, exist_ok=True)

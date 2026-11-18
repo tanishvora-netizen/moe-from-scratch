@@ -34,6 +34,8 @@ def parse_args():
     p.add_argument("--dataset", default="tinystories", choices=["shakespeare", "tinystories"])
     p.add_argument("--tokenizer", default="byte", choices=["byte", "gpt2"])
     p.add_argument("--max_mb", type=int, default=200, help="MB of TinyStories text to use")
+    p.add_argument("--data_dir", default=None,
+                   help="use an already-tokenized dataset dir (meta.json, train.bin, val.bin) instead of --dataset")
     # model
     p.add_argument("--ffn", default="moe", choices=["moe", "dense"])
     p.add_argument("--router", default="aux_loss", choices=["aux_loss", "aux_free", "expert_choice"])
@@ -129,8 +131,9 @@ def main():
         torch.backends.cudnn.allow_tf32 = True
 
     # ---- data ----
-    data_dir = prepare_dataset(args.dataset, args.tokenizer, args.max_mb)
+    data_dir = args.data_dir or prepare_dataset(args.dataset, args.tokenizer, args.max_mb)
     meta = load_meta(data_dir)
+    args.tokenizer = meta["tokenizer"]   # the data decides the tokenizer, not the flag
     train_data, val_data = load_split(data_dir, "train"), load_split(data_dir, "val")
 
     # ---- model ----

@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from moe.data import DATA_ROOT, get_batch, get_tokenizer, load_split, sample_offsets
+from moe.data import dataset_dir, get_batch, get_tokenizer, load_split, sample_offsets
 from moe.model import load_checkpoint
 
 
@@ -96,8 +96,8 @@ def main():
 
     tokenizer_name = run_args.get("tokenizer", "byte")
     tok = get_tokenizer(tokenizer_name)
-    suffix = f"_{run_args.get('max_mb', 200)}mb" if run_args.get("dataset") == "tinystories" else ""
-    data_dir = DATA_ROOT / f"{run_args.get('dataset', 'tinystories')}_{tokenizer_name}{suffix}"
+    data_dir = run_args.get("data_dir") or dataset_dir(
+        run_args.get("dataset", "tinystories"), tokenizer_name, run_args.get("max_mb", 200))
     val = load_split(data_dir, "val")
 
     layers = model.moe_layers()
