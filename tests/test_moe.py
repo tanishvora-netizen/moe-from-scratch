@@ -9,15 +9,13 @@ from moe.model import MoETransformer
 from moe.moe_layer import MoE
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SMALL = dict(d_model=64, n_heads=4, n_layers=2, seq_len=32, n_routed_experts=8, expert_hidden=32,
-             top_k=2, n_shared_experts=1, vocab_size=256)
 
 
 @pytest.mark.parametrize("router", ["aux_loss", "aux_free", "expert_choice"])
-def test_triton_matches_naive(router):
+def test_triton_matches_naive(small_cfg, router):
     pytest.importorskip("triton")
     torch.manual_seed(0)
-    cfg = ModelConfig(**SMALL, router=router, moe_impl="triton")
+    cfg = small_cfg(router=router, moe_impl="triton")
     m_t = MoE(cfg).to(DEVICE)
     m_t.reset_parameters(0.05, 0.05)
     m_n = MoE(replace(cfg, moe_impl="naive")).to(DEVICE)
@@ -36,9 +34,9 @@ def test_triton_matches_naive(router):
 
 
 @pytest.mark.parametrize("router", ["aux_loss", "aux_free", "expert_choice"])
-def test_model_overfits_one_batch(router):
+def test_model_overfits_one_batch(small_cfg, router):
     torch.manual_seed(0)
-    cfg = ModelConfig(**SMALL, router=router, moe_impl="naive")
+    cfg = small_cfg(router=router, moe_impl="naive")
     model = MoETransformer(cfg).to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=3e-3)
     x = torch.randint(0, 256, (4, 33), device=DEVICE)
@@ -53,8 +51,8 @@ def test_model_overfits_one_batch(router):
     assert info["ce"].item() < 0.5 * first
 
 
-def test_aux_free_bias_moves_toward_underloaded_experts():
-    m = MoE(ModelConfig(**SMALL, router="aux_free", moe_impl="naive"))
+def test_aux_free_bias_moves_toward_underloaded_experts(small_cfg):
+    m = MoE(small_cfg(router="aux_free", moe_impl="naive"))
     m.router.load_accum.copy_(torch.tensor([100., 0, 0, 0, 0, 0, 0, 0]))
     m.router.update_bias()
     assert m.router.expert_bias[0] < 0 and torch.all(m.router.expert_bias[1:] > 0)
