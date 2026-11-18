@@ -5,8 +5,8 @@ Benchmarks (needs an NVIDIA GPU):
   2. kernel only  - one grouped-GEMM launch vs a Python loop of per-expert matmuls
   3. full layer   - naive MoE vs Triton MoE vs matched dense SwiGLU, fwd and fwd+bwd
 
-  python benchmark.py
-  python benchmark.py --d_model 1024 --expert_hidden 512 --n_experts 64 --top_k 6   # bigger shapes
+  python scripts/benchmark.py
+  python scripts/benchmark.py --d_model 1024 --expert_hidden 512 --n_experts 64 --top_k 6   # bigger shapes
 """
 import argparse
 import csv

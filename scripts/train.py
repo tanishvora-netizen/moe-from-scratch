@@ -1,9 +1,9 @@
 """
 Train a small DeepSeek-style MoE transformer (or its matched dense baseline).
 
-  python train.py --dataset shakespeare --steps 200 --impl naive          # quick CPU/Mac smoke test
-  python train.py --name aux_free --router aux_free                       # real run on a GPU
-  python train.py --name dense --ffn dense                                # matched dense baseline
+  python scripts/train.py --dataset shakespeare --steps 200 --impl naive          # quick CPU/Mac smoke test
+  python scripts/train.py --name aux_free --router aux_free                       # real run on a GPU
+  python scripts/train.py --name dense --ffn dense                                # matched dense baseline
 """
 import argparse
 import json
