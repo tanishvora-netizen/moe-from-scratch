@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,8 @@ name = "moe-from-scratch"
 version = "0.1.0"
 description = "A small DeepSeek-style Mixture-of-Experts transformer with a custom Triton grouped-GEMM kernel"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Tanish Vora", email = "tanishvora@berkeley.edu" }]
 # On Linux, the torch wheel pulls in a matching triton. Triton only runs on NVIDIA GPUs
