@@ -54,7 +54,9 @@ def test_backward(counts, T, K, N, gather):
     a, b, offsets, row_idx = make_case(counts, T, K, N, gather, seed=1)
     a1, b1 = a.clone().requires_grad_(), b.clone().requires_grad_()
     a2, b2 = a.clone().float().requires_grad_(), b.clone().float().requires_grad_()
-    grad_out = torch.randn(sum(counts), N, device=DEVICE)
+    # Rounded to DTYPE because .float()'s backward hands grouped_gemm a DTYPE gradient. With an unrounded
+    # grad_out, the reference sees a different dC, and that rounding error grows with the rows per expert.
+    grad_out = torch.randn(sum(counts), N, device=DEVICE).to(DTYPE).float()
 
     (grouped_gemm(a1, b1, offsets, row_idx).float() * grad_out).sum().backward()
     (reference(a2, b2, offsets, row_idx) * grad_out).sum().backward()
