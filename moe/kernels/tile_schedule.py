@@ -23,15 +23,15 @@ def make_tile_schedule(
     """
     E = offsets.numel() - 1
     counts = offsets[1:] - offsets[:-1]
-    tiles = (counts + block_m - 1) // block_m              # tiles per expert
-    tile_end = torch.cumsum(tiles, 0)                      # inclusive prefix sum
+    tiles_per_expert = (counts + block_m - 1) // block_m
+    tile_end = torch.cumsum(tiles_per_expert, 0)           # inclusive prefix sum
     max_tiles = (M + block_m - 1) // block_m + E
     t = torch.arange(max_tiles, device=offsets.device, dtype=tile_end.dtype)
     expert = torch.searchsorted(tile_end, t, right=True)   # first expert whose tile range ends after t
     valid = expert < E
     expert = expert.clamp(max=E - 1)
-    local = t - (tile_end - tiles)[expert]                 # tile index within its expert
-    start = offsets[expert] + local * block_m
+    tile_in_expert = t - (tile_end - tiles_per_expert)[expert]
+    start = offsets[expert] + tile_in_expert * block_m
     end = offsets[expert + 1]
     start = torch.where(valid, start, end)                 # invalid tiles -> empty range
     return expert.to(torch.int32), start.to(torch.int32), end.to(torch.int32)

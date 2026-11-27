@@ -19,7 +19,8 @@ class AuxFreeRouter(Router):
 
     def forward(self, x: torch.Tensor, causal: bool = False) -> Routing:
         scores = torch.sigmoid(self.logits(x))
-        _, top_experts = (scores + self.expert_bias).topk(self.top_k, dim=-1)   # bias changes which experts win
+        selection_scores = scores + self.expert_bias
+        _, top_experts = selection_scores.topk(self.top_k, dim=-1)
         top_weights = scores.gather(-1, top_experts)                           # gates still use the unbiased scores
         routing = token_choice_routing(top_experts, top_weights, self.n_experts)
         if self.training:
@@ -29,6 +30,6 @@ class AuxFreeRouter(Router):
     @torch.no_grad()
     def update_bias(self) -> None:
         """DeepSeek-V3 rule, called once per optimizer step: b_e += gamma * sign(mean_load - load_e)."""
-        error = self.load_accum.mean() - self.load_accum   # > 0 for under-loaded experts
-        self.expert_bias += self.bias_update_rate * torch.sign(error)
+        underload = self.load_accum.mean() - self.load_accum
+        self.expert_bias += self.bias_update_rate * torch.sign(underload)
         self.load_accum.zero_()

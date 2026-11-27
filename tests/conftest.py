@@ -4,12 +4,8 @@ Without a GPU, the Triton kernels run in Triton's CPU interpreter. TRITON_INTERP
 before triton is imported, which is why it happens here at collection time.
 """
 import os
-import sys
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tests run without `pip install -e .` too
 
 try:
     import torch

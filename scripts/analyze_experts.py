@@ -48,9 +48,8 @@ def main():
                                   autocast_context(device, torch.bfloat16))
 
     summary = [layer_summary(layer, joint) for layer, joint in enumerate(joints)]
-    report = []
-    for row, joint in zip(summary, joints, strict=True):
-        report += layer_report(row, joint, tokenizer, args.top, args.min_count)
+    reports = [layer_report(row, joint, tokenizer, args.top, args.min_count)
+               for row, joint in zip(summary, joints, strict=True)]
 
     out_dir = Path(args.ckpt).parent / "analysis"
     out_dir.mkdir(exist_ok=True)
@@ -58,8 +57,8 @@ def main():
     for row in summary:
         print(f"{row['layer']:>5} | {row['maxvio']:>7.3f} | {row['normalized_mi']:>7.3f}")
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
-    (out_dir / "report.txt").write_text("\n".join(report))
-    print("\n".join(report[: cfg.n_routed_experts + 1]))   # layer 0 preview
+    (out_dir / "report.txt").write_text("\n".join(line for report in reports for line in report))
+    print("\n".join(reports[0]))
     print(f"\nfull report: {out_dir / 'report.txt'}")
 
     try:

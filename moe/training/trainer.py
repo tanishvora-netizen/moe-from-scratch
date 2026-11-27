@@ -14,7 +14,7 @@ import torch
 
 from ..checkpoint import save_checkpoint
 from ..config import ModelConfig
-from ..data.batches import get_batch, load_meta, load_split, sample_offsets
+from ..data.batches import VALIDATION_SEED, get_batch, load_meta, load_split, sample_offsets
 from ..data.datasets import prepare_dataset
 from ..data.tokenizers import get_tokenizer
 from ..model.transformer import MoETransformer
@@ -32,9 +32,8 @@ def build_model(args: argparse.Namespace, vocab_size: int, device: str) -> tuple
         n_routed_experts=args.n_experts, expert_hidden=args.expert_hidden, top_k=args.top_k,
         n_shared_experts=args.n_shared, first_k_dense=args.first_k_dense, router=args.router,
         aux_loss_coef=args.aux_loss_coef, bias_update_rate=args.bias_update_rate,
-        capacity_factor=args.capacity_factor, moe_impl=args.impl,
+        capacity_factor=args.capacity_factor, moe_impl=args.impl, dense_hidden=args.dense_hidden,
     )
-    cfg.dense_hidden = args.dense_hidden or cfg.matched_dense_hidden
     return MoETransformer(cfg).to(device), cfg
 
 
@@ -114,8 +113,7 @@ def train(args: argparse.Namespace) -> None:
     meta = load_meta(data_dir)
     args.tokenizer = meta["tokenizer"]   # the data decides the tokenizer, not the flag
     train_data, val_data = load_split(data_dir, "train"), load_split(data_dir, "val")
-    # Validation windows come from their own seed, so val loss is comparable across runs with different --seed.
-    val_rng = np.random.default_rng(0)
+    val_rng = np.random.default_rng(VALIDATION_SEED)
     val_offsets = [sample_offsets(val_rng, val_data, args.batch_size, args.seq_len) for _ in range(args.eval_iters)]
 
     model, cfg = build_model(args, meta["vocab_size"], device)

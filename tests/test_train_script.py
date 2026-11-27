@@ -86,7 +86,8 @@ def test_analyze_experts_script(moe_run):
     run_script("analyze_experts.py", "--ckpt", moe_run / "ckpt.pt", "--batches", 2, "--batch_size", 4,
                "--min_count", 1)
     summary = json.loads((moe_run / "analysis" / "summary.json").read_text())
-    assert len(summary) == 2   # one entry per MoE layer
+    n_layers = int(TINY_MODEL[TINY_MODEL.index("--n_layers") + 1])
+    assert len(summary) == n_layers   # every layer is MoE: the run sets no --first_k_dense
     assert all(0.0 <= s["normalized_mi"] <= 1.0 for s in summary)
 
 

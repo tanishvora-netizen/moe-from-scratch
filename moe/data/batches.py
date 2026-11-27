@@ -5,6 +5,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
+# Validation windows come from their own seed, so val loss is comparable across runs with different --seed.
+VALIDATION_SEED = 0
+
 
 def load_meta(data_dir: str | Path) -> dict:
     """meta.json: dataset, tokenizer, vocab_size, the token dtype and the train/val token counts."""

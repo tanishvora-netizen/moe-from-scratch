@@ -63,10 +63,14 @@ def test_aux_free_bias_moves_toward_underloaded_experts(small_cfg):
 
 
 def test_param_count_in_target_range():
-    total, active = MoETransformer(ModelConfig()).num_params()
+    total, _ = MoETransformer(ModelConfig()).num_params()
     assert 6e6 <= total <= 10e6, total
+
+
+def test_dense_baseline_matches_moe_active_params():
+    _, active = MoETransformer(ModelConfig()).num_params()
     dense_total, _ = MoETransformer(ModelConfig(ffn_type="dense")).num_params()
-    assert abs(active - dense_total) / dense_total < 0.02   # dense baseline matches MoE active params
+    assert abs(active - dense_total) / dense_total < 0.02
 
 
 def test_naive_model_runs_without_triton():
