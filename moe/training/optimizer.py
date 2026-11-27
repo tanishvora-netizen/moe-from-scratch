@@ -1,4 +1,7 @@
-"""The AdamW optimizer and its parameter groups."""
+"""The AdamW optimizer with its parameter groups, and the learning-rate schedule."""
+import argparse
+import math
+
 import torch
 import torch.nn as nn
 
@@ -13,3 +16,12 @@ def build_optimizer(
               {"params": no_decay, "weight_decay": 0.0}]
     kwargs = {"fused": True} if device_type == "cuda" else {}
     return torch.optim.AdamW(groups, lr=lr, betas=betas, **kwargs)
+
+
+def lr_at(step: int, args: argparse.Namespace) -> float:
+    """Linear warmup over args.warmup steps, then cosine decay to args.min_lr_frac * args.lr at args.steps."""
+    if step < args.warmup:
+        return args.lr * (step + 1) / args.warmup
+    progress = min(1.0, (step - args.warmup) / max(1, args.steps - args.warmup))
+    cosine = 0.5 * (1 + math.cos(math.pi * progress))
+    return args.lr * (args.min_lr_frac + (1 - args.min_lr_frac) * cosine)
