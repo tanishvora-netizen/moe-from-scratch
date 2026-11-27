@@ -96,13 +96,6 @@ def lr_at(step, args):
     return args.lr * (args.min_lr_frac + (1 - args.min_lr_frac) * cosine)
 
 
-def make_scaler(enabled):
-    try:
-        return torch.amp.GradScaler("cuda", enabled=enabled)
-    except (AttributeError, TypeError):  # older torch
-        return torch.cuda.amp.GradScaler(enabled=enabled)
-
-
 @torch.no_grad()
 def evaluate(model, val_data, val_offsets, seq_len, device, ctx):
     """Mean cross-entropy on fixed validation windows, so numbers are comparable across runs."""
@@ -241,7 +234,7 @@ def main():
     print(f"[run] params: total={total / 1e6:.2f}M  active/token={active / 1e6:.2f}M")
 
     opt = model.configure_optimizer(args.weight_decay, args.lr, device)
-    scaler = make_scaler(dtype == torch.float16)
+    scaler = torch.amp.GradScaler("cuda", enabled=dtype == torch.float16)
     tokens_per_step = args.batch_size * args.grad_accum * args.seq_len
 
     with open(run_dir / "metrics.jsonl", "w") as log_f:
