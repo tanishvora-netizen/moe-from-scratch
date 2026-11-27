@@ -17,9 +17,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from moe.config import ModelConfig
+from moe import ModelConfig, MoETransformer, save_checkpoint
 from moe.data import get_batch, get_tokenizer, load_meta, load_split, prepare_dataset, sample_offsets
-from moe.model import MoETransformer
+from moe.training.metrics import routing_stats
+from moe.training.optimizer import build_optimizer
 
 
 def parse_args():
@@ -97,14 +98,14 @@ def lr_at(step, args):
 
 
 @torch.no_grad()
-def evaluate(model, val_data, val_offsets, seq_len, device, ctx):
+def evaluate(model, val_data, val_offsets, seq_len, device, ctx, causal_routing=False):
     """Mean cross-entropy on fixed validation windows, so numbers are comparable across runs."""
     model.eval()
     losses = []
     for ix in val_offsets:
         x, y = get_batch(val_data, ix, seq_len, device)
         with ctx:
-            _, _, info = model(x, y)
+            _, _, info = model(x, y, causal_routing=causal_routing)
         losses.append(info["ce"].item())
     model.train()
     return float(np.mean(losses))
@@ -130,16 +131,16 @@ def eval_record(model, args, val_data, val_offsets, device, ctx, step):
     if args.ffn == "moe" and args.router == "expert_choice":
         # Expert choice peeks at other tokens (incl. future ones) when routing, so its val loss
         # is optimistic. Also report a causal eval that routes each token on its own (top-k).
-        model.set_router_eval_mode("token_choice")
-        rec["val_loss_token_choice"] = evaluate(model, val_data, val_offsets, args.seq_len, device, ctx)
-        model.set_router_eval_mode(None)
+        rec["val_loss_token_choice"] = evaluate(model, val_data, val_offsets, args.seq_len, device, ctx,
+                                                causal_routing=True)
     return rec
 
 
 def train_step(model, opt, scaler, args, train_data, rng, device, ctx, lr):
     """One optimizer step with gradient accumulation.
 
-    Returns (loss, info, grad_norm), with loss and info["ce"] / info["aux"] averaged over the micro-batches.
+    Returns (loss, info, grad_norm), with loss and info["ce"] / info["aux"] averaged over the micro-batches
+    and info["routing"] from the last micro-batch.
     """
     for g in opt.param_groups:
         g["lr"] = lr
@@ -154,7 +155,7 @@ def train_step(model, opt, scaler, args, train_data, rng, device, ctx, lr):
         ce_sum += info["ce"]
         aux_sum += info["aux"]
     n = args.grad_accum
-    loss, info = loss_sum / n, {"ce": ce_sum / n, "aux": aux_sum / n}
+    loss, info = loss_sum / n, {"ce": ce_sum / n, "aux": aux_sum / n, "routing": info["routing"]}
     scaler.unscale_(opt)
     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
     scaler.step(opt)
@@ -182,16 +183,10 @@ def format_train(rec):
     return msg
 
 
-def save_checkpoint(model, cfg, args, step, run_dir):
-    torch.save({"model": model.state_dict(), "config": asdict(cfg), "args": vars(args), "step": step},
-               run_dir / "ckpt.pt")
-
-
 def write_sample(model, args, run_dir, device, ctx, max_new_tokens=400):
     """Generate a short sample with causal routing and save it next to the checkpoint."""
     tok = get_tokenizer(args.tokenizer)
     model.eval()
-    model.set_router_eval_mode("token_choice")   # only affects expert-choice models
     prompt = "ROMEO:" if args.dataset == "shakespeare" and not args.data_dir else "Once upon a time"
     idx = torch.tensor([tok.encode(prompt)], device=device)
     with ctx:
@@ -233,7 +228,7 @@ def main():
     print(f"[run] {name} | device={device} dtype={dtype} impl={args.impl if args.ffn == 'moe' else '-'}")
     print(f"[run] params: total={total / 1e6:.2f}M  active/token={active / 1e6:.2f}M")
 
-    opt = model.configure_optimizer(args.weight_decay, args.lr, device)
+    opt = build_optimizer(model, args.weight_decay, args.lr, device)
     scaler = torch.amp.GradScaler("cuda", enabled=dtype == torch.float16)
     tokens_per_step = args.batch_size * args.grad_accum * args.seq_len
 
@@ -248,7 +243,7 @@ def main():
                 rec = eval_record(model, args, val_data, val_offsets, device, ctx, step)
                 print(format_eval(rec))
                 log(rec)
-                save_checkpoint(model, cfg, args, step, run_dir)
+                save_checkpoint(run_dir / "ckpt.pt", model, cfg, vars(args), step)
                 t0, steps_since = time.time(), 0   # don't count eval time in throughput
             if step == args.steps:
                 break
@@ -263,7 +258,7 @@ def main():
                 rec = {"step": step, "train_loss": loss.item(), "ce": info["ce"].item(), "aux": info["aux"].item(),
                        "lr": lr, "grad_norm": float(grad_norm),
                        "tok_per_s": tokens_per_step * steps_since / (time.time() - t0)}
-                rec.update(model.routing_stats())
+                rec.update(routing_stats(info["routing"]))
                 print(format_train(rec))
                 log(rec)
                 t0, steps_since = time.time(), 0

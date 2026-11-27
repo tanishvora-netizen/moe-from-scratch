@@ -7,8 +7,8 @@ from contextlib import nullcontext
 
 import torch
 
+from moe import load_checkpoint
 from moe.data import get_tokenizer
-from moe.model import load_checkpoint
 
 
 def main():
@@ -24,7 +24,6 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, cfg, run_args = load_checkpoint(args.ckpt, device, impl="triton" if device == "cuda" else "naive")
     model.eval()
-    model.set_router_eval_mode("token_choice")   # causal routing for expert-choice models
     tok = get_tokenizer(run_args.get("tokenizer", "byte"))
     ctx = torch.autocast("cuda", dtype=torch.bfloat16) if device == "cuda" else nullcontext()
 

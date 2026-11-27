@@ -1,4 +1,6 @@
+"""A small DeepSeek-style Mixture-of-Experts language model. The package root re-exports the public API."""
+from .checkpoint import load_checkpoint, save_checkpoint
 from .config import ModelConfig
-from .model import MoETransformer, load_checkpoint
+from .model.transformer import MoETransformer
 
-__all__ = ["ModelConfig", "MoETransformer", "load_checkpoint"]
+__all__ = ["ModelConfig", "MoETransformer", "load_checkpoint", "save_checkpoint"]

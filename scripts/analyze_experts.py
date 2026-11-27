@@ -22,8 +22,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from moe import load_checkpoint
 from moe.data import dataset_dir, get_batch, get_tokenizer, load_split, sample_offsets
-from moe.model import load_checkpoint
 
 
 def make_categorizer(tokenizer_name, tok):
@@ -100,22 +100,19 @@ def main():
         run_args.get("dataset", "tinystories"), tokenizer_name, run_args.get("max_mb", 200))
     val = load_split(data_dir, "val")
 
-    layers = model.moe_layers()
-    for m in layers:
-        m.record = True
+    n_layers = len(model.moe_layers())
     V, E = cfg.vocab_size, cfg.n_routed_experts
-    joint = [np.zeros((V, E), dtype=np.int64) for _ in layers]
+    joint = [np.zeros((V, E), dtype=np.int64) for _ in range(n_layers)]
 
     rng = np.random.default_rng(0)
     with torch.no_grad():
         for _ in range(args.batches):
             x, _ = get_batch(val, sample_offsets(rng, val, args.batch_size, cfg.seq_len), cfg.seq_len, device)
             with ctx:
-                model(x)
+                _, _, info = model(x)
             ids = x.reshape(-1)
-            for li, m in enumerate(layers):
-                tok_idx, exp = m.last_assign
-                flat = ids[tok_idx] * E + exp
+            for li, routing in enumerate(info["routing"]):
+                flat = ids[routing.sorted_token] * E + routing.sorted_expert
                 joint[li] += torch.bincount(flat, minlength=V * E).view(V, E).cpu().numpy()
 
     out_dir = Path(args.ckpt).parent / "analysis"
@@ -163,8 +160,7 @@ def main():
 
     try:
         import matplotlib.pyplot as plt
-        n = len(layers)
-        fig, axes = plt.subplots(1, n, figsize=(3.2 * n, 5), squeeze=False)
+        fig, axes = plt.subplots(1, n_layers, figsize=(3.2 * n_layers, 5), squeeze=False)
         for li, ax in enumerate(axes[0]):
             im = ax.imshow(np.log2(np.clip(lifts[li], 1e-3, None)), cmap="RdBu_r", vmin=-2, vmax=2, aspect="auto")
             ax.set_title(f"layer {li}  (nMI {summary[li]['normalized_mi']:.2f})", fontsize=9)

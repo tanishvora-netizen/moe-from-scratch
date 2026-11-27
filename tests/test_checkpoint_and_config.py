@@ -1,11 +1,8 @@
 """Checkpoints load back into an identical model; bad configs fail loudly."""
-from dataclasses import asdict
-
 import pytest
 import torch
 
-from moe.config import ModelConfig
-from moe.model import MoETransformer, load_checkpoint
+from moe import ModelConfig, MoETransformer, load_checkpoint, save_checkpoint
 
 
 @pytest.mark.parametrize("router", ["aux_loss", "aux_free", "expert_choice"])
@@ -16,9 +13,7 @@ def test_checkpoint_round_trip(small_cfg, tmp_path, router):
     if router == "aux_free":   # the bias is a buffer, not a parameter: make sure it is saved too
         for m in model.moe_layers():
             m.router.expert_bias.uniform_(-0.1, 0.1)
-    # same layout scripts/train.py writes
-    torch.save({"model": model.state_dict(), "config": asdict(cfg), "args": {"tokenizer": "byte"}, "step": 7},
-               tmp_path / "ckpt.pt")
+    save_checkpoint(tmp_path / "ckpt.pt", model, cfg, {"tokenizer": "byte"}, step=7)
 
     loaded, loaded_cfg, args = load_checkpoint(tmp_path / "ckpt.pt", impl="naive")
     x = torch.randint(0, 256, (2, cfg.seq_len))
