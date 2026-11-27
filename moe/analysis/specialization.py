@@ -1,5 +1,4 @@
-"""Expert specialization for analyze_experts.py: which tokens each routed expert handles on validation text.
-
+"""The expert specialization numbers behind analyze_experts.py, which measure the tokens each routed expert handles.
 joint[v, e] counts how often token id v was routed to expert e in one MoE layer.
 Shapes: V the vocabulary size, E routed experts, C token categories.
 """
@@ -77,7 +76,7 @@ def collect_joint_counts(
             _, _, info = model(x)
         token_ids = x.reshape(-1)
         for joint, routing in zip(joints, info["routing"], strict=True):
-            pairs = token_ids[routing.sorted_token] * E + routing.sorted_expert
+            pairs = token_ids[routing.sorted_token] * E + routing.sorted_expert   # flat index into joint
             joint += torch.bincount(pairs, minlength=V * E).view(V, E).cpu().numpy()
     return joints
 
@@ -88,9 +87,9 @@ def expert_load(joint: np.ndarray) -> np.ndarray:
 
 
 def normalized_mi(joint: np.ndarray) -> float:
-    """I(token; expert) / H(expert): 0 = routing ignores token identity, 1 = token id fully determines the expert.
+    """I(token; expert) / H(expert). It is 0 when routing ignores the token and 1 when the token id decides the expert.
 
-    p is the joint distribution, px and pe its token and expert marginals.
+    p is the joint distribution, and px and pe are its token and expert marginals.
     """
     p = joint / joint.sum()
     px, pe = p.sum(1, keepdims=True), p.sum(0, keepdims=True)
@@ -135,8 +134,10 @@ def layer_report(
 def category_lifts(
     joints: list[np.ndarray], tokenizer_name: str, tok: ByteTokenizer | GPT2Tokenizer
 ) -> tuple[list[np.ndarray], list[str]]:
-    """Per layer, an (E, C) array of lift = P(category | expert) / P(category), nan for categories never seen;
-    and the C category names."""
+    """Returns one (E, C) array per layer and the C category names.
+
+    Each array holds lift = P(category | expert) / P(category), with nan for categories never seen.
+    """
     category, categories = make_categorizer(tokenizer_name, tok)
     token_category = np.array([categories.index(category(i)) for i in range(joints[0].shape[0])])   # (V,)
     lifts = []

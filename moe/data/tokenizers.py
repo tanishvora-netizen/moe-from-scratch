@@ -1,6 +1,5 @@
-"""Tokenizers: byte-level for small, readable models, and GPT-2 BPE through tiktoken.
-
-Each one's dtype is the numpy type of its token files: uint8 holds 256 ids, uint16 holds GPT-2's 50257.
+"""The byte-level tokenizer and GPT-2 BPE through tiktoken. Each one's dtype is the numpy type of its token files,
+since uint8 holds 256 ids and uint16 holds GPT-2's 50257.
 """
 import numpy as np
 
@@ -8,8 +7,8 @@ import numpy as np
 class ByteTokenizer:
     """One token per UTF-8 byte, vocab 256, no dependencies.
 
-    Keeps the model at ~7M params and makes the expert-specialization analysis very readable
-    (spaces, vowels, punctuation...).
+    It is the default because it keeps the model near 7M parameters, and the specialization analysis can
+    group its tokens into readable categories such as spaces, vowels and punctuation.
     """
 
     name, vocab_size, dtype = "byte", 256, np.uint8
@@ -22,8 +21,10 @@ class ByteTokenizer:
 
 
 class GPT2Tokenizer:
-    """tiktoken BPE, vocab 50257. The tied embedding alone is ~12.9M params at d_model=256,
-    so total params jump well past 10M."""
+    """GPT-2 BPE through tiktoken, vocab 50257.
+
+    At d_model=256 the tied embedding alone has 12.9M parameters, so the model is well past 10M.
+    """
 
     name, dtype = "gpt2", np.uint16
 

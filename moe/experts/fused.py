@@ -1,6 +1,5 @@
-"""Triton expert computation: every routed expert in two grouped-GEMM launches, one per matmul.
-
-Imports Triton, so the MoE layer only imports this module when cfg.moe_impl is "triton".
+"""The Triton expert path, which covers every routed expert in two grouped-GEMM launches. It imports Triton,
+so MoELayer imports this module only when moe_impl is "triton".
 Shapes: T tokens, E routed experts, M assignments, d the model width, h the expert hidden size.
 """
 import torch
@@ -11,11 +10,14 @@ from ..routing.assignments import Routing
 
 
 def fused_experts(x: torch.Tensor, routing: Routing, w_gate_up: torch.Tensor, w_down: torch.Tensor) -> torch.Tensor:
-    """x: (T, d), w_gate_up: (E, d, 2h), w_down: (E, h, d) -> (T, d), the gate-weighted sum of expert outputs."""
-    hidden = grouped_gemm(x, w_gate_up, routing.offsets, routing.sorted_token)   # (M, 2h), gather fused
+    """Returns the (T, d) gate-weighted sum of each token's expert outputs.
+
+    x is (T, d), w_gate_up is (E, d, 2h) and w_down is (E, h, d).
+    """
+    hidden = grouped_gemm(x, w_gate_up, routing.offsets, routing.sorted_token)   # (M, 2h), gather fused in
     gate, up = hidden.chunk(2, dim=-1)
     expert_out = grouped_gemm(F.silu(gate) * up, w_down, routing.offsets)        # (M, d)
-    # Accumulate in fp32: a token's k expert outputs are summed, and low-precision adds lose bits.
+    # Sum in fp32, because adding a token's expert outputs in bf16 loses precision.
     out = torch.zeros(x.shape, device=x.device, dtype=torch.float32)
     out.index_add_(0, routing.sorted_token, expert_out.float() * routing.sorted_weight[:, None])
     return out.to(x.dtype)

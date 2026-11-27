@@ -1,4 +1,6 @@
-"""Router: the shared Routing layout, the balance-loss formula, and which routers are causal."""
+"""Router: the shared Routing layout, the balance-loss formula, and which routers are causal.
+Shapes: T tokens, E routed experts, k experts per token, M assignments.
+"""
 import pytest
 import torch
 import torch.nn as nn
@@ -11,7 +13,7 @@ ROUTERS = ["aux_loss", "aux_free", "expert_choice"]
 
 @pytest.mark.parametrize("strategy", ROUTERS)
 def test_routing_layout_is_consistent(small_cfg, strategy):
-    """Every router must produce the layout the kernels assume (see routing.assignments.Routing)."""
+    """Every router returns the Routing layout the kernels assume."""
     torch.manual_seed(0)
     cfg = small_cfg(router=strategy)
     router = build_router(cfg)
@@ -43,12 +45,12 @@ def test_aux_loss_is_one_for_a_uniform_router(small_cfg):
 
 
 def test_aux_loss_reaches_e_over_k_when_routing_collapses(small_cfg):
-    """If every token goes to the same k experts, E * sum(f * P) = E / k, the worst case for top-k."""
+    """When every token goes to the same k experts, E * sum(f * P) reaches its top-k maximum, E / k."""
     cfg = small_cfg(router="aux_loss")
     router = build_router(cfg)
     with torch.no_grad():
         router.gate.weight.zero_()
-        router.gate.weight[: cfg.top_k] = 1.0     # experts 0..k-1 win for every (positive) input
+        router.gate.weight[: cfg.top_k] = 1.0     # experts 0 to k-1 win for every positive input
     r = router(torch.ones(64, cfg.d_model))
     expected = cfg.n_routed_experts / cfg.top_k
     torch.testing.assert_close(r.aux_loss, torch.tensor(expected), atol=1e-3, rtol=1e-3)
@@ -74,7 +76,7 @@ def test_token_choice_routers_are_causal(small_cfg, strategy):
 
 
 def test_expert_choice_sees_future_tokens_unless_evaluated_with_token_choice(small_cfg):
-    """The leak the README warns about: changing later tokens changes earlier predictions."""
+    """Expert choice lets later tokens change earlier logits, the leak in the README, unless routing is causal."""
     torch.manual_seed(0)
     model = MoETransformer(small_cfg(router="expert_choice", moe_impl="naive")).eval()
     assert _prefix_logits_change(model) > 1e-4

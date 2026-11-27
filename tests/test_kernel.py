@@ -1,4 +1,6 @@
-"""Grouped-GEMM kernel vs a plain PyTorch reference (forward + both gradients)."""
+"""The grouped-GEMM kernel against a plain PyTorch reference, forward and both gradients.
+Shapes: T tokens, E experts, M rows of the output, K the inner dimension, N the output width.
+"""
 import pytest
 import torch
 
@@ -12,12 +14,14 @@ TOL = dict(atol=3e-2, rtol=3e-2) if DTYPE == torch.bfloat16 else dict(atol=1e-4,
 
 
 def reference(a, b, offsets, row_idx):
+    """grouped_gemm computed one expert at a time in fp32."""
     a_rows = a[row_idx] if row_idx is not None else a
     o = offsets.tolist()
     return torch.cat([a_rows[o[e]:o[e + 1]].float() @ b[e].float() for e in range(b.shape[0])])
 
 
 def make_case(counts, T, K, N, gather, seed=0):
+    """Random grouped_gemm inputs where expert e owns counts[e] rows. gather=True adds a row_idx into T rows."""
     g = torch.Generator().manual_seed(seed)
     E, M = len(counts), sum(counts)
     offsets = torch.nn.functional.pad(torch.tensor(counts).cumsum(0), (1, 0)).to(DEVICE)

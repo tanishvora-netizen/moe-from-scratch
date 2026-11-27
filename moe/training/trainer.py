@@ -1,5 +1,4 @@
 """The training loop behind scripts/train.py: build the model from the flags, train, evaluate, checkpoint, sample.
-
 One run writes config.json, metrics.jsonl, ckpt.pt and sample.txt to <out_dir>/<name>.
 """
 import argparse
@@ -25,7 +24,7 @@ from .runtime import allow_tf32, autocast_context, pick_device, pick_dtype, pick
 
 
 def build_model(args: argparse.Namespace, vocab_size: int, device: str) -> tuple[MoETransformer, ModelConfig]:
-    """Model from the CLI flags. The dense FFN width defaults to the MoE's active FFN width."""
+    """Builds the model and its ModelConfig from the train.py flags, on device."""
     cfg = ModelConfig(
         vocab_size=vocab_size, seq_len=args.seq_len, d_model=args.d_model,
         n_layers=args.n_layers, n_heads=args.n_heads, dropout=args.dropout, ffn_type=args.ffn,
@@ -50,7 +49,7 @@ def train_step(
 ) -> tuple[torch.Tensor, dict, torch.Tensor]:
     """One optimizer step with gradient accumulation.
 
-    Returns (loss, info, grad_norm), with loss and info["ce"] / info["aux"] averaged over the micro-batches
+    Returns (loss, info, grad_norm), with loss, info["ce"] and info["aux"] averaged over the micro-batches
     and info["routing"] from the last micro-batch.
     """
     for group in optimizer.param_groups:
@@ -72,7 +71,7 @@ def train_step(
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad(set_to_none=True)
-    model.update_router_biases()      # no-op unless router == aux_free
+    model.update_router_biases()      # changes only aux-free routers
     return loss, info, grad_norm
 
 
@@ -84,7 +83,7 @@ def write_sample(
     ctx: AbstractContextManager,
     max_new_tokens: int = 400,
 ) -> str:
-    """Generate a short sample with causal routing and save it next to the checkpoint."""
+    """Generates a short sample with causal routing, saves it as sample.txt and returns it."""
     tokenizer = get_tokenizer(args.tokenizer)
     model.eval()
     prompt = "ROMEO:" if args.dataset == "shakespeare" and not args.data_dir else "Once upon a time"
@@ -147,7 +146,7 @@ def train(args: argparse.Namespace) -> None:
 
             if step % args.log_interval == 0:
                 if device == "cuda":
-                    torch.cuda.synchronize()   # CUDA runs asynchronously: wait, so the timer sees finished work
+                    torch.cuda.synchronize()   # CUDA runs asynchronously, so wait for queued work before timing
                 record = {"step": step, "train_loss": loss.item(), "ce": info["ce"].item(),
                           "aux": info["aux"].item(), "lr": lr, "grad_norm": float(grad_norm),
                           "tok_per_s": tokens_per_step * timed_steps / (time.time() - timer_start)}

@@ -1,5 +1,4 @@
-"""The Router base class: the gate projection and fp32 router logits that every routing strategy shares.
-
+"""The Router base class, which holds the gate projection and computes the fp32 logits every router uses.
 Shapes: T tokens, E routed experts, d the model width.
 """
 import torch
@@ -20,14 +19,14 @@ class Router(nn.Module):
         self.gate = nn.Linear(cfg.d_model, cfg.n_routed_experts, bias=False)
 
     def logits(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (T, d) -> (T, E) fp32 scores."""
-        # fp32 even under autocast: the layer is small and top-k selection is sensitive to precision.
+        """Returns (T, E) fp32 scores for x of shape (T, d)."""
+        # fp32 even under autocast, because top-k selection is sensitive to precision and the layer is small.
         device_type = x.device.type if x.device.type in ("cuda", "cpu") else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
             return F.linear(x.float(), self.gate.weight.float())
 
     def forward(self, x: torch.Tensor, causal: bool = False) -> Routing:
-        """x: (T, d) flattened tokens -> Routing for this batch.
+        """Routes x, the (T, d) flattened tokens of one batch.
 
         causal=True requires each token's experts to depend on that token alone, as a decoder needs
         at evaluation and generation time. Token-choice routers always route that way.

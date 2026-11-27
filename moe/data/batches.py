@@ -5,12 +5,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# Validation windows come from their own seed, so val loss is comparable across runs with different --seed.
+# Seeds the validation windows apart from --seed, so every run and checkpoint is measured on the same text.
 VALIDATION_SEED = 0
 
 
 def load_meta(data_dir: str | Path) -> dict:
-    """meta.json: dataset, tokenizer, vocab_size, the token dtype and the train/val token counts."""
+    """meta.json: dataset, tokenizer, vocab_size, the token dtype and the train and val token counts."""
     return json.loads((Path(data_dir) / "meta.json").read_text())
 
 
@@ -26,7 +26,7 @@ def sample_offsets(rng: np.random.Generator, data: np.ndarray, batch_size: int, 
 
 
 def get_batch(data: np.ndarray, offsets, seq_len: int, device) -> tuple[torch.Tensor, torch.Tensor]:
-    """x, y: (len(offsets), seq_len) int64 token ids, with y shifted one token ahead of x."""
+    """Returns x and y, each (len(offsets), seq_len) int64 token ids, with y shifted one token ahead of x."""
     x = torch.from_numpy(np.stack([data[i:i + seq_len] for i in offsets]).astype(np.int64))
     y = torch.from_numpy(np.stack([data[i + 1:i + 1 + seq_len] for i in offsets]).astype(np.int64))
     if str(device).startswith("cuda"):

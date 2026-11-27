@@ -1,5 +1,4 @@
 """Where and in what precision code runs: device, dtype, autocast, TF32, and the fallback when Triton can't run.
-
 Training uses all of it. sample.py and analyze_experts.py use autocast_context.
 """
 import os
@@ -29,7 +28,7 @@ def pick_dtype(dtype: str, device: str) -> torch.dtype:
 
 
 def pick_impl(impl: str, device: str) -> str:
-    """--impl, or "naive" when Triton can't run: it needs an NVIDIA GPU or its CPU interpreter (TRITON_INTERPRET=1)."""
+    """Returns --impl, or "naive" when Triton can't run. Triton needs an NVIDIA GPU or TRITON_INTERPRET=1."""
     if impl == "triton" and device != "cuda" and os.environ.get("TRITON_INTERPRET") != "1":
         print("[warn] Triton kernels need an NVIDIA GPU -> using --impl naive")
         return "naive"

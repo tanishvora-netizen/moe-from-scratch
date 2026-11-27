@@ -1,4 +1,4 @@
-"""What training logs: routing stats (expert load, MaxVio, dropped tokens), the console lines, and metrics.jsonl."""
+"""What training logs: routing stats, the console lines and metrics.jsonl."""
 import json
 from typing import TextIO
 
@@ -11,7 +11,7 @@ from ..routing.assignments import Routing
 def routing_stats(routings: list[Routing]) -> dict:
     """Load statistics for one forward pass, from each MoE layer's Routing. Empty for a dense model.
 
-    maxvio is (max_load - mean_load) / mean_load (Wang et al. 2024), averaged over layers; 0 is perfect balance.
+    maxvio is (max_load - mean_load) / mean_load (Wang et al. 2024), averaged over layers. 0 is perfect balance.
     dropped_frac, the share of tokens no expert picked, appears only for routings that can drop tokens.
     """
     if not routings:

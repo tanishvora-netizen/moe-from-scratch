@@ -1,5 +1,6 @@
-"""End to end: scripts/train.py runs a few steps on a tiny local dataset, and the analysis scripts
-(sample.py, plot_runs.py, analyze_experts.py) work on what it writes."""
+"""scripts/train.py runs a few steps on a tiny local dataset, and sample.py, plot_runs.py and analyze_experts.py
+work on what it writes.
+"""
 import json
 import os
 import subprocess
@@ -18,7 +19,7 @@ SHORT_RUN = ["--steps", "4", "--warmup", "2", "--batch_size", "4",
 
 
 def run_script(name, *args):
-    """Run scripts/<name> the way a user would. Works with or without `pip install -e .`."""
+    """Runs scripts/<name> in a subprocess, as a user would. PYTHONPATH makes it work without `pip install -e .`."""
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / name), *map(str, args)],
                             cwd=ROOT, env=env, capture_output=True, text=True)
@@ -60,6 +61,7 @@ def moe_run(tiny_dataset, tmp_path_factory):
 @pytest.mark.parametrize("ffn,router", [("dense", "aux_loss"), ("moe", "aux_loss"),
                                         ("moe", "aux_free"), ("moe", "expert_choice")])
 def test_train_script_runs(tiny_dataset, tmp_path, ffn, router):
+    """Each model trains, logs evals at steps 0, 2 and 4, and writes a checkpoint and a sample."""
     run = train(tiny_dataset, tmp_path, ffn, router)
     recs = read_metrics(run)
     assert [r["step"] for r in recs if "val_loss" in r] == [0, 2, 4]
@@ -87,7 +89,7 @@ def test_analyze_experts_script(moe_run):
                "--min_count", 1)
     summary = json.loads((moe_run / "analysis" / "summary.json").read_text())
     n_layers = int(TINY_MODEL[TINY_MODEL.index("--n_layers") + 1])
-    assert len(summary) == n_layers   # every layer is MoE: the run sets no --first_k_dense
+    assert len(summary) == n_layers   # the run sets no --first_k_dense, so every layer is MoE
     assert all(0.0 <= s["normalized_mi"] <= 1.0 for s in summary)
 
 

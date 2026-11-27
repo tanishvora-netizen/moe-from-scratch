@@ -1,6 +1,5 @@
-"""Routers for the load-balancing ablation, picked by ModelConfig.router.
-
-All three return the same sorted Routing layout, so the expert computation is identical across them.
+"""The three routers of the load-balancing ablation, picked by ModelConfig.router.
+All three return the same sorted Routing layout, so the expert computation is the same for each.
 """
 from ..config import ModelConfig
 from .aux_free import AuxFreeRouter

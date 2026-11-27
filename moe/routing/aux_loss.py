@@ -1,5 +1,5 @@
-"""Token-choice top-k over a softmax, balanced by the Switch/GShard auxiliary loss
-(Fedus et al. 2021; Lepikhin et al. 2020).
+"""Token-choice top-k over a softmax, balanced by the Switch Transformer and GShard auxiliary loss
+(Fedus et al. 2021; Lepikhin et al. 2020). E is the number of routed experts and k the experts per token.
 """
 from dataclasses import replace
 
@@ -16,8 +16,8 @@ class AuxLossRouter(Router):
         top_weights, top_experts = probs.topk(self.top_k, dim=-1)
         routing = token_choice_routing(top_experts, top_weights, self.n_experts)
 
-        # E * sum_e f_e * P_e, which is 1.0 when perfectly balanced and E / k when every token
-        # picks the same k experts. f has no gradient; P carries it to the gate.
+        # E * sum_e f_e * P_e is 1 when the load is even and E / k when every token picks the same k experts.
+        # f comes from counts and has no gradient, so the gradient reaches the gate through P.
         assignment_frac = routing.counts.float() / (routing.n_tokens * self.top_k)   # f_e
         mean_prob = probs.mean(0)                                                     # P_e
         return replace(routing, aux_loss=self.n_experts * (assignment_frac * mean_prob).sum())

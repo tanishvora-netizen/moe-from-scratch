@@ -1,7 +1,5 @@
-"""Shared test setup.
-
-Without a GPU, the Triton kernels run in Triton's CPU interpreter. TRITON_INTERPRET has to be set
-before triton is imported, which is why it happens here at collection time.
+"""Shared test setup. Without a GPU the Triton kernels run in Triton's CPU interpreter, and TRITON_INTERPRET
+must be set before triton is imported, so this file sets it at collection time.
 """
 import os
 
@@ -23,7 +21,7 @@ SMALL = dict(d_model=64, n_heads=4, n_layers=2, seq_len=32, n_routed_experts=8, 
 
 @pytest.fixture
 def small_cfg():
-    """small_cfg(router="aux_free", ...) -> a tiny ModelConfig with the given overrides."""
+    """small_cfg(router="aux_free", ...) returns a SMALL ModelConfig with those overrides."""
     def make(**overrides):
         return ModelConfig(**{**SMALL, **overrides})
     return make

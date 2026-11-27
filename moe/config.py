@@ -1,3 +1,6 @@
+"""ModelConfig holds every model hyperparameter and checks them when it is created.
+The model, the routers and checkpoint files all read it.
+"""
 from dataclasses import dataclass
 from typing import Literal, get_args
 
@@ -13,8 +16,7 @@ def _check_choice(name, value, options):
 
 @dataclass
 class ModelConfig:
-    # ---- core transformer ----
-    vocab_size: int = 256            # 256 = byte-level tokenizer
+    vocab_size: int = 256            # 256 fits the byte-level tokenizer
     seq_len: int = 256
     d_model: int = 256
     n_layers: int = 6
@@ -22,28 +24,24 @@ class ModelConfig:
     dropout: float = 0.0
     rope_base: float = 10000.0
 
-    # ---- feed-forward ----
     ffn_type: FfnType = "moe"
-    dense_hidden: int | None = None  # dense FFN hidden size. None means matched_dense_hidden.
+    dense_hidden: int | None = None  # dense FFN hidden size, None means matched_dense_hidden
 
-    # ---- DeepSeek-MoE style experts ----
-    n_routed_experts: int = 16       # fine-grained routed experts
-    expert_hidden: int = 64          # hidden size of each routed expert
+    n_routed_experts: int = 16
+    expert_hidden: int = 64          # hidden size of each routed and each shared expert
     top_k: int = 4                   # routed experts per token
-    n_shared_experts: int = 2        # always-on experts, merged into one SwiGLU of size n_shared*expert_hidden
-    first_k_dense: int = 0           # first k layers use a dense FFN instead of MoE (DeepSeek uses >= 1)
+    n_shared_experts: int = 2        # experts that every token goes through
+    first_k_dense: int = 0           # layers before this index use a dense FFN. DeepSeek models use at least 1.
 
-    # ---- routing / load balancing ----
     router: RouterName = "aux_loss"
-    aux_loss_coef: float = 0.01      # Switch/GShard balance loss weight      (router="aux_loss")
-    bias_update_rate: float = 1e-3   # gamma for DeepSeek-V3 bias balancing  (router="aux_free")
-    capacity_factor: float = 1.0     # capacity = cf * tokens * top_k / E    (router="expert_choice")
+    aux_loss_coef: float = 0.01      # balance loss weight, read only by the "aux_loss" router
+    bias_update_rate: float = 1e-3   # bias step gamma, read only by the "aux_free" router
+    capacity_factor: float = 1.0     # scales each expert's token capacity, read only by the "expert_choice" router
 
-    # ---- implementation ----
-    moe_impl: MoEImpl = "triton"     # "triton" (custom grouped-GEMM kernel) | "naive" (python loop over experts)
+    moe_impl: MoEImpl = "triton"     # "triton" runs the grouped-GEMM kernel, "naive" loops over experts in Python
 
     def __post_init__(self):
-        # Raise instead of assert so the checks still run under `python -O`.
+        # Raise, not assert, so the checks still run under `python -O`.
         if self.d_model % self.n_heads != 0:
             raise ValueError(f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})")
         if (self.d_model // self.n_heads) % 2 != 0:

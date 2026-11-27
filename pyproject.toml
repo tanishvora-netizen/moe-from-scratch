@@ -11,8 +11,8 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Tanish Vora", email = "tanishvora@berkeley.edu" }]
-# On Linux, the torch wheel pulls in a matching triton. Triton only runs on NVIDIA GPUs
-# (or in its CPU interpreter for tests); everything else works on any machine.
+# On Linux the torch wheel pulls in a matching triton. Triton runs only on NVIDIA GPUs or in its CPU
+# interpreter, and the rest of the package runs on any machine.
 dependencies = ["torch>=2.4", "numpy"]
 
 [project.optional-dependencies]
@@ -34,4 +34,4 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-ignore = ["E731"]   # small lambdas are used for kernel launch grids and benchmark closures
+ignore = ["E731"]   # allows the small lambdas for kernel launch grids and benchmark closures

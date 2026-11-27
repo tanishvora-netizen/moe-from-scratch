@@ -3,7 +3,7 @@ import argparse
 
 
 def parse_args(description: str | None = None) -> argparse.Namespace:
-    """Parses sys.argv. description is the text --help prints above the flags; train.py passes its docstring."""
+    """Parses sys.argv. description is the text --help prints above the flags, and train.py passes its docstring."""
     parser = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     run = parser.add_argument_group("run")
     run.add_argument("--name", default=None, help="run name (default: derived from ffn/router)")

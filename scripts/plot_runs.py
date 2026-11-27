@@ -1,8 +1,8 @@
-"""Compare runs for the load-balancing ablation.
+"""Compares the runs of the load-balancing ablation.
 
-  python scripts/plot_runs.py runs/dense runs/moe_aux_loss runs/moe_aux_free runs/moe_expert_choice
+    python scripts/plot_runs.py runs/dense runs/moe_aux_loss runs/moe_aux_free runs/moe_expert_choice
 
-Saves a 3-panel plot and prints a Markdown table that can be pasted into the README as is.
+It saves a 3-panel plot and prints a Markdown table that can be pasted into the README as is.
 """
 import argparse
 

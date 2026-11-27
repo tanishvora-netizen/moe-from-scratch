@@ -1,7 +1,6 @@
-"""Download and tokenize a dataset once into flat token files (nanoGPT style), cached under <repo>/data.
-
-shakespeare: ~1 MB, downloads in a second, good for smoke tests. tinystories: short children's stories
-(Eldan & Li, 2023) streamed from Hugging Face, the default for real runs because small models learn it well.
+"""Downloads and tokenizes a dataset once into flat token files, as nanoGPT does, cached under <repo>/data.
+shakespeare is about 1 MB, for smoke tests. tinystories (Eldan and Li 2023) streams short children's stories
+from Hugging Face and is the default, because small models learn it well.
 """
 import json
 import urllib.request
@@ -17,7 +16,10 @@ SHAKESPEARE_URL = "https://raw.githubusercontent.com/karpathy/char-rnn/master/da
 
 
 def _write_docs(path: Path, docs: Iterable[str], tok: ByteTokenizer | GPT2Tokenizer) -> int:
-    """Stream documents into a flat binary token file without holding it all in RAM."""
+    """Writes docs to path as one flat token file and returns its token count.
+
+    GPT-2 tokens are flushed every million, so a large split never has to fit in RAM.
+    """
     n_tokens, buf = 0, []
     with open(path, "wb") as f:
         for doc in docs:
@@ -59,7 +61,7 @@ def dataset_dir(dataset: str = "tinystories", tokenizer: str = "byte", max_mb: i
 
 
 def prepare_dataset(dataset: str = "tinystories", tokenizer: str = "byte", max_mb: int = 200) -> Path:
-    """Download and tokenize a dataset once; later calls return the cached directory."""
+    """Downloads and tokenizes a dataset once. Later calls return the cached directory."""
     out = dataset_dir(dataset, tokenizer, max_mb)
     if (out / "meta.json").exists():
         return out

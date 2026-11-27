@@ -22,6 +22,7 @@ def evaluate(
     """Mean cross-entropy on fixed validation windows, so numbers are comparable across runs.
 
     val_offsets holds one array of window starts per batch. ctx is the autocast context.
+    The model is left in train mode.
     """
     model.eval()
     losses = []
@@ -46,8 +47,8 @@ def eval_record(
     """{"step", "val_loss"}, plus "val_loss_token_choice" for expert-choice runs."""
     record = {"step": step, "val_loss": evaluate(model, val_data, val_offsets, args.seq_len, device, ctx)}
     if args.ffn == "moe" and args.router == "expert_choice":
-        # Expert choice peeks at other tokens (incl. future ones) when routing, so its val loss
-        # is optimistic. Also report a causal eval that routes each token on its own (top-k).
+        # Expert choice routes with later tokens in view, so its val_loss is optimistic.
+        # This causal eval routes each token to its own top k.
         record["val_loss_token_choice"] = evaluate(model, val_data, val_offsets, args.seq_len, device, ctx,
                                                    causal_routing=True)
     return record

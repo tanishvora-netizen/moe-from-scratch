@@ -11,7 +11,7 @@ class Run(NamedTuple):
 
 
 def load_run(run_dir: str | Path) -> Run:
-    """Splits <run_dir>/metrics.jsonl into eval records (with "val_loss") and train records (with "train_loss")."""
+    """Reads <run_dir>/metrics.jsonl into a Run. Eval records have "val_loss" and train records have "train_loss"."""
     lines = (Path(run_dir) / "metrics.jsonl").read_text().splitlines()
     records = [json.loads(line) for line in lines if line.strip()]
     evals = [record for record in records if "val_loss" in record]
@@ -20,12 +20,12 @@ def load_run(run_dir: str | Path) -> Run:
 
 
 def median_tok_per_s(train: list[dict]) -> float:
-    """Median training throughput (the upper median for an even count)."""
+    """Median training throughput, the upper median for an even count."""
     return sorted(record["tok_per_s"] for record in train)[len(train) // 2]
 
 
 def _format_or_dash(value: float | None, spec: str) -> str:
-    """'-' for metrics a run doesn't have (MaxVio for dense, causal eval for token-choice routers)."""
+    """'-' for a metric the run lacks, such as MaxVio for dense or the causal eval for token-choice routers."""
     return "-" if value is None else format(value, spec)
 
 

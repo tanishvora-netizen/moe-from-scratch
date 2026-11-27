@@ -11,7 +11,9 @@ from .swiglu import SwiGLU
 
 
 class Block(nn.Module):
-    """x + attn(norm(x)), then x + ffn(norm(x)). The first cfg.first_k_dense blocks use a dense FFN."""
+    """x + attn(norm(x)), then x + ffn(norm(x)). The FFN is dense when ffn_type is "dense" and in the first
+    first_k_dense blocks.
+    """
 
     def __init__(self, cfg: ModelConfig, layer_idx: int):
         super().__init__()
@@ -24,7 +26,7 @@ class Block(nn.Module):
     def forward(
         self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, causal_routing: bool = False
     ) -> tuple[torch.Tensor, Routing | None]:
-        """x: (batch, seq, d_model) -> (same shape, the MoE layer's Routing or None for a dense block)."""
+        """Returns (x, routing) with x still (batch, seq, d_model). routing is None for a dense block."""
         x = x + self.attn(self.norm1(x), cos, sin)
         if not self.is_moe:
             return x + self.ffn(self.norm2(x)), None

@@ -1,17 +1,15 @@
-"""
-Expert-specialization analysis: which tokens does each expert handle?
+"""Measures which tokens each routed expert of a trained MoE checkpoint handles.
 
-  python scripts/analyze_experts.py --ckpt runs/moe_aux_free/ckpt.pt
+    python scripts/analyze_experts.py --ckpt runs/moe_aux_free/ckpt.pt
 
-Outputs (in <run>/analysis/):
-  specialization.png  per-layer heatmap of lift = P(category | expert) / P(category)
-  load.png            per-layer expert load
-  report.txt          top tokens per expert (by lift) for every layer
-  summary.json        per-layer MaxVio and normalized mutual information I(token; expert) / H(expert)
+It writes these files to <run>/analysis/:
+    specialization.png  per-layer heatmap of lift = P(category | expert) / P(category)
+    load.png            per-layer expert load
+    report.txt          each expert's top tokens by lift, for every layer
+    summary.json        per-layer MaxVio and normalized MI = I(token; expert) / H(expert)
 
-Normalized MI is a single "how specialized are the experts" number you can compare
-across routing strategies: 0 = routing ignores token identity, 1 = token id fully
-determines the expert.
+Normalized MI compares routers in one number. It is 0 when routing ignores the token and 1 when the token id
+decides the expert.
 """
 import argparse
 import json
