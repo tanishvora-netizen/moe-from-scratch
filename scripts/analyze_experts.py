@@ -23,7 +23,9 @@ import numpy as np
 import torch
 
 from moe import load_checkpoint
-from moe.data import dataset_dir, get_batch, get_tokenizer, load_split, sample_offsets
+from moe.data.batches import get_batch, load_split, sample_offsets
+from moe.data.datasets import dataset_dir
+from moe.data.tokenizers import get_tokenizer
 
 
 def make_categorizer(tokenizer_name, tok):

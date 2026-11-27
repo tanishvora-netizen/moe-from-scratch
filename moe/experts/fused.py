@@ -6,7 +6,7 @@ Shapes: T tokens, E routed experts, M assignments, d the model width, h the expe
 import torch
 import torch.nn.functional as F
 
-from ..kernels import grouped_gemm
+from ..kernels.grouped_gemm import grouped_gemm
 from ..routing.assignments import Routing
 
 

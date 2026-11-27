@@ -18,7 +18,7 @@ import triton
 
 from moe.config import ModelConfig
 from moe.experts.layer import MoELayer
-from moe.kernels import grouped_gemm
+from moe.kernels.grouped_gemm import grouped_gemm
 from moe.model.swiglu import SwiGLU
 
 

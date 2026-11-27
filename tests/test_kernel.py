@@ -3,7 +3,8 @@ import pytest
 import torch
 
 triton = pytest.importorskip("triton")
-from moe.kernels import grouped_gemm, make_tile_schedule  # noqa: E402
+from moe.kernels.grouped_gemm import grouped_gemm  # noqa: E402
+from moe.kernels.tile_schedule import make_tile_schedule  # noqa: E402
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32

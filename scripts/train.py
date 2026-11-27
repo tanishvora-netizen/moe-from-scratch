@@ -18,7 +18,9 @@ import numpy as np
 import torch
 
 from moe import ModelConfig, MoETransformer, save_checkpoint
-from moe.data import get_batch, get_tokenizer, load_meta, load_split, prepare_dataset, sample_offsets
+from moe.data.batches import get_batch, load_meta, load_split, sample_offsets
+from moe.data.datasets import prepare_dataset
+from moe.data.tokenizers import get_tokenizer
 from moe.training.metrics import routing_stats
 from moe.training.optimizer import build_optimizer
 
