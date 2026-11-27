@@ -130,7 +130,7 @@ else:
     _FWD_FIXED, _WGRAD_FIXED = {}, {}
 
 
-def _launch_fwd(a, b, schedule, M, row_idx=None):
+def launch_forward(a, b, schedule, M, row_idx=None):
     """C (M, N) = A[row_idx] @ B[expert]. b may be a strided view (used for B^T in backward)."""
     tile_expert, tile_start, tile_end = schedule
     K = a.shape[1]
@@ -155,7 +155,7 @@ def _launch_fwd(a, b, schedule, M, row_idx=None):
     return c
 
 
-def _launch_wgrad(a, dc, offsets, row_idx, E):
+def launch_weight_grad(a, dc, offsets, row_idx, E):
     """dB (E, K, N) in fp32."""
     K, N = a.shape[1], dc.shape[1]
     db = torch.empty((E, K, N), device=a.device, dtype=torch.float32)

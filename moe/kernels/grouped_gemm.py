@@ -6,7 +6,7 @@ Shapes: T tokens, E experts, M rows of C, K the inner dimension, N the output wi
 import torch
 
 from .tile_schedule import make_tile_schedule
-from .triton_kernels import _launch_fwd, _launch_wgrad
+from .triton_kernels import launch_forward, launch_weight_grad
 
 
 def _compute_dtype(t: torch.Tensor) -> torch.dtype:
@@ -34,7 +34,7 @@ class GroupedGEMM(torch.autograd.Function):
         b_cast = b.to(dtype).contiguous()
         M = row_idx.numel() if row_idx is not None else a_cast.shape[0]
         schedule = make_tile_schedule(offsets, M)
-        c = _launch_fwd(a_cast, b_cast, schedule, M, row_idx)
+        c = launch_forward(a_cast, b_cast, schedule, M, row_idx)
 
         ctx.save_for_backward(a_cast, b_cast, offsets, row_idx)
         ctx.schedule, ctx.M = schedule, M
@@ -48,7 +48,7 @@ class GroupedGEMM(torch.autograd.Function):
         da = db = None
         if ctx.needs_input_grad[0]:
             # dA_rows = dC @ B[e]^T : reuse the forward kernel with B viewed as (E, N, K)
-            da_rows = _launch_fwd(dc, b_cast.transpose(1, 2), ctx.schedule, ctx.M, None)
+            da_rows = launch_forward(dc, b_cast.transpose(1, 2), ctx.schedule, ctx.M, None)
             if row_idx is not None:   # undo the fused gather: scatter-add rows back to tokens
                 da = torch.zeros(a_cast.shape, device=dc.device, dtype=torch.float32)
                 da.index_add_(0, row_idx, da_rows.float())
@@ -56,7 +56,7 @@ class GroupedGEMM(torch.autograd.Function):
                 da = da_rows
             da = da.to(ctx.a_dtype)
         if ctx.needs_input_grad[1]:
-            db = _launch_wgrad(a_cast, dc, offsets, row_idx, b_cast.shape[0]).to(ctx.b_dtype)
+            db = launch_weight_grad(a_cast, dc, offsets, row_idx, b_cast.shape[0]).to(ctx.b_dtype)
         return da, db, None, None
 
 
