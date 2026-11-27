@@ -1,4 +1,9 @@
 from dataclasses import dataclass
+from typing import Literal, get_args
+
+FfnType = Literal["moe", "dense"]
+RouterName = Literal["aux_loss", "aux_free", "expert_choice"]
+MoEImpl = Literal["triton", "naive"]
 
 
 def _check_choice(name, value, options):
@@ -18,9 +23,8 @@ class ModelConfig:
     rope_base: float = 10000.0
 
     # ---- feed-forward ----
-    ffn_type: str = "moe"            # "moe" | "dense"
-    dense_hidden: int = 384          # dense FFN hidden size. 384 = (n_shared + top_k) * expert_hidden,
-                                     # i.e. the dense baseline matches the MoE's *active* FFN params.
+    ffn_type: FfnType = "moe"
+    dense_hidden: int | None = None  # dense FFN hidden size. None means matched_dense_hidden.
 
     # ---- DeepSeek-MoE style experts ----
     n_routed_experts: int = 16       # fine-grained routed experts
@@ -30,13 +34,13 @@ class ModelConfig:
     first_k_dense: int = 0           # first k layers use a dense FFN instead of MoE (DeepSeek uses >= 1)
 
     # ---- routing / load balancing ----
-    router: str = "aux_loss"         # "aux_loss" | "aux_free" | "expert_choice"
+    router: RouterName = "aux_loss"
     aux_loss_coef: float = 0.01      # Switch/GShard balance loss weight      (router="aux_loss")
     bias_update_rate: float = 1e-3   # gamma for DeepSeek-V3 bias balancing  (router="aux_free")
     capacity_factor: float = 1.0     # capacity = cf * tokens * top_k / E    (router="expert_choice")
 
     # ---- implementation ----
-    moe_impl: str = "triton"         # "triton" (custom grouped-GEMM kernel) | "naive" (python loop over experts)
+    moe_impl: MoEImpl = "triton"     # "triton" (custom grouped-GEMM kernel) | "naive" (python loop over experts)
 
     def __post_init__(self):
         # Raise instead of assert so the checks still run under `python -O`.
@@ -44,11 +48,13 @@ class ModelConfig:
             raise ValueError(f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads})")
         if (self.d_model // self.n_heads) % 2 != 0:
             raise ValueError(f"head_dim ({self.d_model // self.n_heads}) must be even for RoPE")
-        _check_choice("ffn_type", self.ffn_type, ("moe", "dense"))
-        _check_choice("router", self.router, ("aux_loss", "aux_free", "expert_choice"))
-        _check_choice("moe_impl", self.moe_impl, ("triton", "naive"))
+        _check_choice("ffn_type", self.ffn_type, get_args(FfnType))
+        _check_choice("router", self.router, get_args(RouterName))
+        _check_choice("moe_impl", self.moe_impl, get_args(MoEImpl))
         if not 1 <= self.top_k <= self.n_routed_experts:
             raise ValueError(f"top_k ({self.top_k}) must be between 1 and n_routed_experts ({self.n_routed_experts})")
+        if self.dense_hidden is None:
+            self.dense_hidden = self.matched_dense_hidden
 
     @property
     def matched_dense_hidden(self) -> int:

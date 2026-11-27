@@ -32,16 +32,16 @@ class MoETransformer(nn.Module):
 
     def _init_weights(self) -> None:
         std = 0.02
-        out_std = std / math.sqrt(2 * self.cfg.n_layers)   # GPT-2 style scaling for residual outputs
+        residual_out_std = std / math.sqrt(2 * self.cfg.n_layers)   # GPT-2 style scaling for residual outputs
         # named_modules() yields each MoELayer before its children, which fixes the RNG order.
         for name, module in self.named_modules():
             if isinstance(module, nn.Linear):
                 is_out = name.endswith("attn.proj") or name.endswith("w_down")
-                nn.init.normal_(module.weight, std=out_std if is_out else std)
+                nn.init.normal_(module.weight, std=residual_out_std if is_out else std)
             elif isinstance(module, nn.Embedding):
                 nn.init.normal_(module.weight, std=std)
             elif isinstance(module, MoELayer):
-                module.reset_parameters(std, out_std)
+                module.reset_parameters(std, residual_out_std)
 
     def forward(
         self, idx: torch.Tensor, targets: torch.Tensor | None = None, causal_routing: bool = False

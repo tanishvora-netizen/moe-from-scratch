@@ -1,8 +1,13 @@
 """Finished runs for plot_runs.py: read each run's metrics.jsonl and build the Markdown results table."""
 import json
 from pathlib import Path
+from typing import NamedTuple
 
-Run = tuple[str, list[dict], list[dict]]   # (run name, eval records, train records)
+
+class Run(NamedTuple):
+    name: str
+    evals: list[dict]
+    train: list[dict]
 
 
 def load_run(run_dir: str | Path) -> Run:
@@ -11,7 +16,7 @@ def load_run(run_dir: str | Path) -> Run:
     records = [json.loads(line) for line in lines if line.strip()]
     evals = [record for record in records if "val_loss" in record]
     train = [record for record in records if "train_loss" in record]
-    return Path(run_dir).name, evals, train
+    return Run(Path(run_dir).name, evals, train)
 
 
 def median_tok_per_s(train: list[dict]) -> float:

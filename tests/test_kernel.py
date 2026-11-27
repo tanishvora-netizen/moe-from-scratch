@@ -28,11 +28,11 @@ def make_case(counts, T, K, N, gather, seed=0):
 
 
 CASES = [
-    # counts per expert (incl. empty experts and non-multiples of the tile size), T, K, N
-    ([5, 0, 70, 1, 33], 40, 32, 48),
-    ([64, 64, 64, 64], 100, 64, 64),
-    ([0, 0, 130, 0], 50, 48, 80),
-    ([17] * 8, 60, 96, 40),
+    # counts per expert, T, K, N
+    pytest.param([5, 0, 70, 1, 33], 40, 32, 48, id="ragged-counts"),
+    pytest.param([64, 64, 64, 64], 100, 64, 64, id="full-tiles"),
+    pytest.param([0, 0, 130, 0], 50, 48, 80, id="empty-experts"),
+    pytest.param([17] * 8, 60, 96, 40, id="equal-partial-tiles"),
 ]
 
 

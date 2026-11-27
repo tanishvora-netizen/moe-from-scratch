@@ -33,9 +33,9 @@ class MoELayer(nn.Module):
         # n_shared_experts experts of width h behave as one SwiGLU of width n_shared_experts * h.
         self.shared = SwiGLU(d, cfg.n_shared_experts * h) if cfg.n_shared_experts > 0 else None
 
-    def reset_parameters(self, std: float, out_std: float) -> None:
+    def reset_parameters(self, std: float, residual_out_std: float) -> None:
         nn.init.normal_(self.w_gate_up, std=std)
-        nn.init.normal_(self.w_down, std=out_std)
+        nn.init.normal_(self.w_down, std=residual_out_std)
 
     def forward(self, x: torch.Tensor, causal_routing: bool = False) -> tuple[torch.Tensor, Routing]:
         """x: (..., d) -> (y with the same shape as x, the Routing used)."""

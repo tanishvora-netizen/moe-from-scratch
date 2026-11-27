@@ -10,7 +10,7 @@ from contextlib import AbstractContextManager
 import numpy as np
 import torch
 
-from ..data.batches import get_batch, sample_offsets
+from ..data.batches import VALIDATION_SEED, get_batch, sample_offsets
 from ..data.tokenizers import ByteTokenizer, GPT2Tokenizer
 from ..model.transformer import MoETransformer
 
@@ -70,7 +70,7 @@ def collect_joint_counts(
     cfg = model.cfg
     V, E = cfg.vocab_size, cfg.n_routed_experts
     joints = [np.zeros((V, E), dtype=np.int64) for _ in model.moe_layers()]
-    rng = np.random.default_rng(0)   # the same windows for every checkpoint, so runs are comparable
+    rng = np.random.default_rng(VALIDATION_SEED)
     for _ in range(n_batches):
         x, _ = get_batch(val_data, sample_offsets(rng, val_data, batch_size, cfg.seq_len), cfg.seq_len, device)
         with ctx:
