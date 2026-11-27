@@ -3,7 +3,7 @@ __pycache__/
 .venv/
 .vscode/
 .idea/
-data/
+/data/
 runs/
 benchmarks/
 *.pt

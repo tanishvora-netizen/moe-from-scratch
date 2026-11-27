@@ -1,24 +1,7 @@
-"""
-Custom Triton grouped-GEMM kernels for the MoE expert computation.
+"""The two Triton kernels behind grouped_gemm, their autotune configs and their launchers.
 
-After routing, every (token, expert) assignment i needs
-
-    C[i] = A[row_idx[i]] @ W[expert(i)]
-
-Assignments are sorted by expert, so expert e owns the contiguous row slice
-[offsets[e], offsets[e+1]). The naive implementation loops over experts in
-Python: a gather + 2-3 small GEMMs per expert = dozens of kernel launches per
-layer, most of them tiny. Here all experts run in a single launch:
-
-  * each program computes one BLOCK_M x BLOCK_N output tile,
-  * tiles never straddle experts (a precomputed "tile schedule" maps each
-    tile -> (expert, row range)), so a tile only touches one weight matrix,
-  * the gather A[row_idx] is fused into the kernel's loads, so the permuted
-    copy of the activations is never materialized.
-
-Backward (implemented below, so the kernel is used for training too):
-  dA[row_idx[i]] += dC[i] @ W[e]^T       -> same forward kernel, W read transposed via strides
-  dW[e] = sum_{i in e} A[row_idx[i]]^T dC[i]  -> a separate weight-gradient kernel
+C = A[row_idx] @ B[expert]: A holds the activations, B the stacked expert weights, C one row per assignment.
+Shapes: E experts, M rows of C, K the inner dimension, N the output width.
 """
 import os
 
@@ -26,42 +9,11 @@ import torch
 import triton
 import triton.language as tl
 
+from .tile_schedule import BLOCK_M
+
 INTERPRET = os.environ.get("TRITON_INTERPRET", "0") == "1"  # CPU interpreter mode (for tests)
 
-# Tile height along the token/row dimension. The tile schedule depends on it,
-# so it is fixed instead of autotuned (BLOCK_N / BLOCK_K / warps are autotuned).
-BLOCK_M = 64
 
-
-# ----------------------------------------------------------------------------------------------
-# Tile schedule (pure torch, no host sync)
-# ----------------------------------------------------------------------------------------------
-def make_tile_schedule(offsets: torch.Tensor, M: int, block_m: int = BLOCK_M):
-    """For each M-tile, return (expert id, first row, end row).
-
-    The number of real tiles depends on the routing, which lives on the GPU. Instead
-    of syncing to read it, we launch an upper bound of cdiv(M, block_m) + E tiles;
-    surplus tiles get start == end and exit immediately inside the kernel.
-    """
-    E = offsets.numel() - 1
-    counts = offsets[1:] - offsets[:-1]
-    tiles = (counts + block_m - 1) // block_m              # tiles per expert
-    tile_end = torch.cumsum(tiles, 0)                      # inclusive prefix sum
-    max_tiles = triton.cdiv(M, block_m) + E
-    t = torch.arange(max_tiles, device=offsets.device, dtype=tile_end.dtype)
-    expert = torch.searchsorted(tile_end, t, right=True)   # first expert whose tile range ends after t
-    valid = expert < E
-    expert = expert.clamp(max=E - 1)
-    local = t - (tile_end - tiles)[expert]                 # tile index within its expert
-    start = offsets[expert] + local * block_m
-    end = offsets[expert + 1]
-    start = torch.where(valid, start, end)                 # invalid tiles -> empty range
-    return expert.to(torch.int32), start.to(torch.int32), end.to(torch.int32)
-
-
-# ----------------------------------------------------------------------------------------------
-# Kernels
-# ----------------------------------------------------------------------------------------------
 @triton.jit
 def _grouped_gemm_fwd_kernel(
     A, B, C, row_idx_ptr,
@@ -73,7 +25,11 @@ def _grouped_gemm_fwd_kernel(
     HAS_ROW_IDX: tl.constexpr,
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
 ):
-    """C[rows of tile] = A[row_idx[rows]] @ B[expert]   (one BLOCK_M x BLOCK_N tile per program)."""
+    """C[rows of tile] = A[row_idx[rows]] @ B[expert]   (one BLOCK_M x BLOCK_N tile per program).
+
+    The tile schedule keeps every tile inside one expert, so a program reads a single weight matrix.
+    The gather A[row_idx] is fused into the loads, so the permuted copy of the activations is never materialized.
+    """
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
 
@@ -174,12 +130,9 @@ else:
     _FWD_FIXED, _WGRAD_FIXED = {}, {}
 
 
-# ----------------------------------------------------------------------------------------------
-# Launchers
-# ----------------------------------------------------------------------------------------------
-def _launch_fwd(a, b, sched, M, row_idx=None):
+def _launch_fwd(a, b, schedule, M, row_idx=None):
     """C (M, N) = A[row_idx] @ B[expert]. b may be a strided view (used for B^T in backward)."""
-    tile_expert, tile_start, tile_end = sched
+    tile_expert, tile_start, tile_end = schedule
     K = a.shape[1]
     E, Kb, N = b.shape
     assert Kb == K, f"inner dims mismatch: {Kb} vs {K}"
@@ -217,62 +170,3 @@ def _launch_wgrad(a, dc, offsets, row_idx, E):
         **_WGRAD_FIXED,
     )
     return db
-
-
-def _compute_dtype(t: torch.Tensor) -> torch.dtype:
-    """Respect torch.autocast: run the kernel in bf16/fp16 when CUDA autocast is on.
-
-    A custom autograd.Function is not cast by autocast automatically, so we look up
-    the active autocast dtype ourselves.
-    """
-    if t.is_cuda and torch.is_autocast_enabled("cuda"):
-        return torch.get_autocast_dtype("cuda")
-    return t.dtype
-
-
-# ----------------------------------------------------------------------------------------------
-# Autograd wrapper
-# ----------------------------------------------------------------------------------------------
-class GroupedGEMM(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, a, b, offsets, row_idx):
-        cdt = _compute_dtype(a)
-        a_c = a.to(cdt).contiguous()
-        b_c = b.to(cdt).contiguous()
-        M = row_idx.numel() if row_idx is not None else a_c.shape[0]
-        sched = make_tile_schedule(offsets, M)
-        c = _launch_fwd(a_c, b_c, sched, M, row_idx)
-
-        ctx.save_for_backward(a_c, b_c, offsets, row_idx)
-        ctx.sched, ctx.M = sched, M
-        ctx.a_dtype, ctx.b_dtype = a.dtype, b.dtype
-        return c
-
-    @staticmethod
-    def backward(ctx, dc):
-        a_c, b_c, offsets, row_idx = ctx.saved_tensors
-        dc = dc.to(a_c.dtype).contiguous()
-        da = db = None
-        if ctx.needs_input_grad[0]:
-            # dA_rows = dC @ B[e]^T : reuse the forward kernel with B viewed as (E, N, K)
-            da_rows = _launch_fwd(dc, b_c.transpose(1, 2), ctx.sched, ctx.M, None)
-            if row_idx is not None:   # undo the fused gather: scatter-add rows back to tokens
-                da = torch.zeros(a_c.shape, device=dc.device, dtype=torch.float32)
-                da.index_add_(0, row_idx, da_rows.float())
-            else:
-                da = da_rows
-            da = da.to(ctx.a_dtype)
-        if ctx.needs_input_grad[1]:
-            db = _launch_wgrad(a_c, dc, offsets, row_idx, b_c.shape[0]).to(ctx.b_dtype)
-        return da, db, None, None
-
-
-def grouped_gemm(a, b, offsets, row_idx=None):
-    """
-    a:       (T, K) activations (rows gathered via row_idx if given, else used as-is)
-    b:       (E, K, N) stacked expert weights
-    offsets: (E+1,) int64, expert e owns output rows [offsets[e], offsets[e+1])
-    row_idx: (M,) int64 or None, source row of `a` for every output row
-    returns  (M, N)
-    """
-    return GroupedGEMM.apply(a, b, offsets, row_idx)

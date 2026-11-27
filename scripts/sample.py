@@ -8,7 +8,7 @@ from contextlib import nullcontext
 import torch
 
 from moe import load_checkpoint
-from moe.data import get_tokenizer
+from moe.data.tokenizers import get_tokenizer
 
 
 def main():
