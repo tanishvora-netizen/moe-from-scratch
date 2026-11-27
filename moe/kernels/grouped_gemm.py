@@ -1,6 +1,5 @@
-"""grouped_gemm(): every expert's matmul in one Triton launch, with a backward pass so training uses it too.
-
-C = A[row_idx] @ B[expert]: A holds the activations, B the stacked expert weights, C one row per assignment.
+"""grouped_gemm runs every expert's matmul C = A[row_idx] @ B[expert] in one Triton launch, with a backward pass.
+A holds the activations, B the stacked expert weights and C one row per assignment.
 Shapes: T tokens, E experts, M rows of C, K the inner dimension, N the output width.
 """
 import torch
@@ -10,10 +9,9 @@ from .triton_kernels import launch_forward, launch_weight_grad
 
 
 def _compute_dtype(t: torch.Tensor) -> torch.dtype:
-    """Respect torch.autocast: run the kernel in bf16/fp16 when CUDA autocast is on.
+    """Returns the CUDA autocast dtype when autocast is on, else t.dtype.
 
-    A custom autograd.Function is not cast by autocast automatically, so we look up
-    the active autocast dtype ourselves.
+    Autocast does not cast the inputs of a custom autograd.Function, so GroupedGEMM looks the dtype up here.
     """
     if t.is_cuda and torch.is_autocast_enabled("cuda"):
         return torch.get_autocast_dtype("cuda")
@@ -21,9 +19,9 @@ def _compute_dtype(t: torch.Tensor) -> torch.dtype:
 
 
 class GroupedGEMM(torch.autograd.Function):
-    """Autograd for C = A[row_idx] @ B[expert]. The backward pass is
+    """Autograd for C = A[row_idx] @ B[expert]. The backward pass is:
 
-        dA[row_idx[i]] += dC[i] @ B[e]^T             the forward kernel again, with B read transposed via strides
+        dA[row_idx[i]] += dC[i] @ B[e]^T             the forward kernel again, reading B transposed through strides
         dB[e] = sum_{i in e} A[row_idx[i]]^T dC[i]   a separate weight-gradient kernel
     """
 
@@ -47,9 +45,9 @@ class GroupedGEMM(torch.autograd.Function):
         dc = dc.to(a_cast.dtype).contiguous()
         da = db = None
         if ctx.needs_input_grad[0]:
-            # dA_rows = dC @ B[e]^T : reuse the forward kernel with B viewed as (E, N, K)
+            # dC @ B[e]^T is the forward kernel with B viewed as (E, N, K).
             da_rows = launch_forward(dc, b_cast.transpose(1, 2), ctx.schedule, ctx.M, None)
-            if row_idx is not None:   # undo the fused gather: scatter-add rows back to tokens
+            if row_idx is not None:   # forward gathered rows of A, so scatter-add row gradients to their tokens
                 da = torch.zeros(a_cast.shape, device=dc.device, dtype=torch.float32)
                 da.index_add_(0, row_idx, da_rows.float())
             else:
@@ -63,16 +61,14 @@ class GroupedGEMM(torch.autograd.Function):
 def grouped_gemm(
     a: torch.Tensor, b: torch.Tensor, offsets: torch.Tensor, row_idx: torch.Tensor | None = None
 ) -> torch.Tensor:
-    """C[i] = a[row_idx[i]] @ b[expert(i)] for every assignment i, all experts in one launch.
+    """Returns C with C[i] = a[row_idx[i]] @ b[e] for every row i that expert e owns, all experts in one launch.
 
-    Assignments are sorted by expert, so expert e owns the contiguous row slice [offsets[e], offsets[e+1]).
-    The naive path loops over experts in Python: a gather and 2-3 small GEMMs per expert, dozens of
-    mostly tiny kernel launches per layer. Here one launch covers every expert and the gather is fused in.
+    Rows are grouped by expert, so each expert owns one contiguous slice of C.
 
-    a:       (T, K) activations (rows gathered via row_idx if given, else used as-is)
+    a:       (T, K) activations, read through row_idx when it is given
     b:       (E, K, N) stacked expert weights
     offsets: (E+1,) int64, expert e owns output rows [offsets[e], offsets[e+1])
-    row_idx: (M,) int64 or None, source row of `a` for every output row
+    row_idx: (M,) int64 or None, the row of a for each output row
     returns  (M, N)
     """
     return GroupedGEMM.apply(a, b, offsets, row_idx)

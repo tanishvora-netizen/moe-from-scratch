@@ -1,4 +1,6 @@
-"""MoE layer: Triton path == naive path for every router; full model trains; param budget; no Triton needed."""
+"""The MoE layer and model: the Triton path matches the naive path, the model trains, the parameter budget
+holds, and the naive path runs without Triton.
+"""
 import os
 import subprocess
 import sys
@@ -17,6 +19,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 @pytest.mark.parametrize("router", ["aux_loss", "aux_free", "expert_choice"])
 def test_triton_matches_naive(small_cfg, router):
+    """The output and every gradient match between the Triton and naive paths."""
     pytest.importorskip("triton")
     torch.manual_seed(0)
     cfg = small_cfg(router=router, moe_impl="triton")
@@ -74,7 +77,7 @@ def test_dense_baseline_matches_moe_active_params():
 
 
 def test_naive_model_runs_without_triton():
-    """Machines without Triton (a Mac, a CPU-only box) must still import moe and run moe_impl="naive"."""
+    """moe imports and runs moe_impl="naive" on a machine without Triton, such as a Mac."""
     code = (
         "import sys\n"
         "sys.modules['triton'] = None\n"   # every `import triton` now raises ImportError

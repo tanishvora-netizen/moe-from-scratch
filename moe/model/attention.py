@@ -1,5 +1,4 @@
 """Causal multi-head self-attention with rotary embeddings on queries and keys.
-
 Shapes: T is the sequence length, d the model width.
 """
 import torch
@@ -20,7 +19,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = cfg.dropout
 
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        """x: (batch, T, d) -> (batch, T, d)."""
+        """x and the result are (batch, T, d). cos and sin are the precompute_rope tables."""
         batch, T, d = x.shape
         query, key, value = self.qkv(x).split(d, dim=-1)
         query = query.view(batch, T, self.n_heads, self.head_dim).transpose(1, 2)

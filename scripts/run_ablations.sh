@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Full experiment on one GPU: dense baseline + 3 load-balancing strategies,
-# then the comparison plot and expert-specialization analysis.
-#   STEPS=5000 bash scripts/run_ablations.sh
+# The full experiment on one GPU: the benchmark, the dense baseline and the three routers,
+# then the comparison plot and the expert analysis of each MoE run.
+# Usage: STEPS=5000 bash scripts/run_ablations.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 STEPS=${STEPS:-5000}

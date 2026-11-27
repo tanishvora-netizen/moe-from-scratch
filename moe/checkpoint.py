@@ -9,19 +9,20 @@ from .model.transformer import MoETransformer
 
 
 def save_checkpoint(path: str | Path, model: MoETransformer, cfg: ModelConfig, args: dict, step: int) -> None:
-    """args is the training flags as a plain dict, which load_checkpoint hands back."""
+    """Writes one ckpt.pt. args must hold only plain Python values, such as vars() of the train.py flags,
+    because load_checkpoint reads the file with weights_only=True.
+    """
     torch.save({"model": model.state_dict(), "config": asdict(cfg), "args": args, "step": step}, path)
 
 
 def load_checkpoint(
     path: str | Path, device: str = "cpu", impl: str | None = None
 ) -> tuple[MoETransformer, ModelConfig, dict]:
-    """Rebuilds the model from a ckpt.pt. Returns (model, cfg, training flags).
+    """Rebuilds the model from a ckpt.pt and returns (model, cfg, training flags).
 
-    impl overrides the saved moe_impl, e.g. to load a GPU-trained checkpoint with impl="naive" on a laptop.
+    impl overrides the saved moe_impl, for example impl="naive" to load a GPU-trained checkpoint on a laptop.
     """
-    # The checkpoint only holds tensors and plain Python values, so the safe loader works
-    # and a downloaded checkpoint can't run arbitrary code through pickle.
+    # weights_only=True stops a downloaded checkpoint from running code through pickle.
     ckpt = torch.load(path, map_location=device, weights_only=True)
     cfg_dict = dict(ckpt["config"])
     if impl is not None:

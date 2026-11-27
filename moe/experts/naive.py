@@ -1,5 +1,4 @@
-"""Reference expert computation: a Python loop over experts, one gather, two matmuls and a scatter each.
-
+"""The reference expert path, a Python loop that does one gather, two matmuls and one scatter per expert.
 Shapes: T tokens, E routed experts, d the model width, h the expert hidden size.
 """
 import torch
@@ -9,9 +8,12 @@ from ..routing.assignments import Routing
 
 
 def naive_experts(x: torch.Tensor, routing: Routing, w_gate_up: torch.Tensor, w_down: torch.Tensor) -> torch.Tensor:
-    """x: (T, d), w_gate_up: (E, d, 2h), w_down: (E, h, d) -> (T, d), the gate-weighted sum of expert outputs."""
+    """Returns the (T, d) gate-weighted sum of each token's expert outputs, the result fused_experts must match.
+
+    x is (T, d), w_gate_up is (E, d, 2h) and w_down is (E, h, d).
+    """
     out = torch.zeros(x.shape, device=x.device, dtype=torch.float32)
-    offsets = routing.offsets.tolist()                 # host sync (part of why this is slow)
+    offsets = routing.offsets.tolist()                 # a host sync, one reason this path is slow
     for expert in range(w_gate_up.size(0)):
         start, end = offsets[expert], offsets[expert + 1]
         if start == end:

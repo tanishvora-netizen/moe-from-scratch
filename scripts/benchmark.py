@@ -1,12 +1,12 @@
-"""
-Benchmarks (needs an NVIDIA GPU):
+"""Checks the Triton MoE layer against the naive one, then times both against a dense layer. Needs an NVIDIA GPU.
 
-  1. correctness  - Triton MoE vs naive MoE: outputs and gradients must match
-  2. kernel only  - one grouped-GEMM launch vs a Python loop of per-expert matmuls
-  3. full layer   - naive MoE vs Triton MoE vs matched dense SwiGLU, fwd and fwd+bwd
+    python scripts/benchmark.py
+    python scripts/benchmark.py --d_model 1024 --expert_hidden 512 --n_experts 64 --top_k 6   # bigger shapes
 
-  python scripts/benchmark.py
-  python scripts/benchmark.py --d_model 1024 --expert_hidden 512 --n_experts 64 --top_k 6   # bigger shapes
+It runs three sections:
+    1. correctness   Triton vs naive MoE layer, outputs and gradients
+    2. kernel only   one grouped-GEMM launch vs a Python loop of per-expert matmuls
+    3. full layer    naive MoE vs Triton MoE vs the matched dense SwiGLU, forward and forward plus backward
 
 Shapes: T tokens, E routed experts, M = T * top_k assignments, d the model width, h the expert hidden size.
 """
@@ -38,7 +38,7 @@ def parse_args():
 
 
 def layer_output(layer: torch.nn.Module, x: torch.Tensor) -> torch.Tensor:
-    """MoELayer returns (y, routing) and SwiGLU returns y; this returns y for both."""
+    """Returns y for both kinds of layer. MoELayer returns (y, routing) and SwiGLU returns y."""
     out = layer(x)
     return out[0] if isinstance(out, tuple) else out
 
@@ -99,7 +99,7 @@ def time_kernel(cfg: ModelConfig, tokens: list[int], dtype: torch.dtype, device:
 def time_layers(
     layers: dict[str, torch.nn.Module], d_model: int, tokens: list[int], dtype: torch.dtype, device: str
 ) -> list[dict]:
-    """Section 3: each whole FFN layer, routing included, forward and forward+backward. layers maps name to layer."""
+    """Section 3: each FFN layer with routing, forward and forward plus backward. layers maps name to layer."""
     print("\n[3] full FFN layer incl. routing (ms)")
     print(f"    {'tokens':>8} | {'naive fwd':>9} | {'triton fwd':>10} | {'dense fwd':>9} || "
           f"{'naive f+b':>9} | {'triton f+b':>10} | {'dense f+b':>9}")
@@ -172,7 +172,7 @@ def main():
     print(f"d={cfg.d_model} E={cfg.n_routed_experts} k={cfg.top_k} h={cfg.expert_hidden} "
           f"shared={cfg.n_shared_experts} | dense baseline hidden={cfg.matched_dense_hidden} | {args.dtype}")
 
-    # The sections run in this order so the seeded random inputs match across runs.
+    # The sections share the global seed, so this order fixes the random inputs each one gets.
     check_correctness(moe_triton, moe_naive, cfg.d_model, dtype, device)
     tokens = [int(t) for t in args.tokens.split(",")]
     rows = time_kernel(cfg, tokens, dtype, device)

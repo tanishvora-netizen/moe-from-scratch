@@ -24,7 +24,7 @@ class MoETransformer(nn.Module):
         self.blocks = nn.ModuleList([Block(cfg, layer_idx) for layer_idx in range(cfg.n_layers)])
         self.norm_f = RMSNorm(cfg.d_model)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
-        self.lm_head.weight = self.tok_emb.weight          # weight tying
+        self.lm_head.weight = self.tok_emb.weight
         cos, sin = precompute_rope(cfg.d_model // cfg.n_heads, cfg.seq_len, cfg.rope_base)
         self.register_buffer("rope_cos", cos, persistent=False)
         self.register_buffer("rope_sin", sin, persistent=False)
@@ -32,8 +32,9 @@ class MoETransformer(nn.Module):
 
     def _init_weights(self) -> None:
         std = 0.02
-        residual_out_std = std / math.sqrt(2 * self.cfg.n_layers)   # GPT-2 style scaling for residual outputs
-        # named_modules() yields each MoELayer before its children, which fixes the RNG order.
+        # GPT-2 init gives residual output layers a smaller std, so the residual stream does not grow with depth.
+        residual_out_std = std / math.sqrt(2 * self.cfg.n_layers)
+        # named_modules() visits each MoELayer before its children, and that order decides each weight's random draws.
         for name, module in self.named_modules():
             if isinstance(module, nn.Linear):
                 is_out = name.endswith("attn.proj") or name.endswith("w_down")
@@ -46,12 +47,12 @@ class MoETransformer(nn.Module):
     def forward(
         self, idx: torch.Tensor, targets: torch.Tensor | None = None, causal_routing: bool = False
     ) -> tuple[torch.Tensor, torch.Tensor | None, dict]:
-        """idx, targets: (batch, seq) token ids -> (logits, loss, info).
+        """Runs idx, the (batch, seq) token ids, and returns (logits, loss, info).
 
-        loss is the cross-entropy, plus the balance loss when cfg.router is "aux_loss"; None without targets.
-        info holds, detached for logging, "aux" (mean balance loss per MoE layer) and "ce" (with targets),
-        and "routing", each MoE layer's Routing in layer order.
-        causal_routing=True makes expert-choice layers route each token on its own (see routing.expert_choice).
+        loss is the cross-entropy plus aux_loss_coef times the balance loss when cfg.router is "aux_loss", and None
+        without targets. info holds detached values for logging: "aux", the mean balance loss per MoE layer, "ce"
+        when targets are given, and "routing", each MoE layer's Routing in layer order.
+        causal_routing=True makes expert-choice layers route each token on its own, as routing.expert_choice explains.
         """
         seq = idx.size(1)
         if seq > self.cfg.seq_len:
@@ -88,7 +89,7 @@ class MoETransformer(nn.Module):
                 module.update_bias()
 
     def num_params(self) -> tuple[int, int]:
-        """(total, active-per-token). Shared (tied) params are counted once."""
+        """Returns (total, active per token) parameter counts. The tied embedding and LM head count once."""
         total = sum(param.numel() for param in self.parameters())
         inactive = 0
         for layer in self.moe_layers():
@@ -100,7 +101,10 @@ class MoETransformer(nn.Module):
     def generate(
         self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 0.8, top_k: int = 50
     ) -> torch.Tensor:
-        """Samples max_new_tokens after idx: (batch, seq). Routing is causal, so no token sees the future."""
+        """Appends max_new_tokens sampled tokens to idx, which is (batch, seq).
+
+        Routing is causal, so each token's experts depend on that token alone.
+        """
         for _ in range(max_new_tokens):
             logits, _, _ = self(idx[:, -self.cfg.seq_len:], causal_routing=True)
             logits = logits[:, -1, :].float() / max(temperature, 1e-5)

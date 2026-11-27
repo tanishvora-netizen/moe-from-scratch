@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ~1 minute sanity check. Works on CPU/Mac (naive impl) or GPU.
+# A quick check: the test suite, then a 200-step run on Shakespeare. Without a GPU it uses the naive path.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python -m pytest -q

@@ -1,6 +1,5 @@
-"""Plots: the specialization heatmap and expert load (analyze_experts.py), and the run comparison (plot_runs.py).
-
-Importing this module imports matplotlib, which is optional for analyze_experts.py.
+"""The specialization heatmap and load plot for analyze_experts.py, and the run comparison for plot_runs.py.
+This module imports matplotlib, which analyze_experts.py treats as optional.
 Shapes: E routed experts, C token categories.
 """
 from pathlib import Path
@@ -16,7 +15,7 @@ def plot_specialization(
 ) -> None:
     """One heatmap per MoE layer of log2 lift, experts by token categories.
 
-    lifts and summary hold one entry per layer, from category_lifts and layer_summary.
+    lifts holds one (E, C) array per layer from category_lifts, and summary one layer_summary row per layer.
     """
     n_layers, E = len(lifts), lifts[0].shape[0]
     fig, axes = plt.subplots(1, n_layers, figsize=(3.2 * n_layers, 5), squeeze=False)

@@ -1,4 +1,4 @@
-"""Checkpoints load back into an identical model; bad configs fail loudly."""
+"""Checkpoints load back into an identical model, and bad configs raise ValueError."""
 import pytest
 import torch
 
@@ -7,6 +7,7 @@ from moe import ModelConfig, MoETransformer, load_checkpoint, save_checkpoint
 
 @pytest.mark.parametrize("router", ["aux_loss", "aux_free", "expert_choice"])
 def test_checkpoint_round_trip(small_cfg, tmp_path, router):
+    """The loaded model gives the same logits, and the config and training flags come back unchanged."""
     torch.manual_seed(0)
     cfg = small_cfg(router=router, moe_impl="naive")
     model = MoETransformer(cfg).eval()
@@ -20,6 +21,7 @@ def test_checkpoint_round_trip(small_cfg, tmp_path, router):
 
 
 def test_checkpoint_keeps_aux_free_bias(small_cfg, tmp_path):
+    """The aux-free bias is a buffer, not a parameter, and the checkpoint still saves it."""
     torch.manual_seed(0)
     cfg = small_cfg(router="aux_free", moe_impl="naive")
     model = MoETransformer(cfg)
