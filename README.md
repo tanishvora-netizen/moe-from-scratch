@@ -2,52 +2,107 @@
 
 [![tests](https://github.com/tanishvora-netizen/moe-from-scratch/actions/workflows/tests.yml/badge.svg)](https://github.com/tanishvora-netizen/moe-from-scratch/actions/workflows/tests.yml)
 
-A small Mixture-of-Experts language model I wrote in PyTorch to understand how DeepSeek-style MoE layers work,
-including the parts that usually hide inside a library: a Triton kernel for the expert matmuls, and the
-load-balancing tricks that stop the router from sending everything to a few experts.
+A small Mixture-of-Experts language model built from scratch in PyTorch, with a custom Triton GPU kernel for the experts. It trains a 7M-parameter model on short children's stories and compares three ways to keep the experts evenly used.
 
-What's in it:
+## What it is
 
-- A ~7M parameter decoder with DeepSeek-MoE style layers: 16 small routed experts (each token picks 4) plus 2
-  shared experts that every token goes through.
-- A Triton grouped-GEMM kernel, forward and backward, that runs every expert's matmul in one launch instead of a
-  Python loop over experts.
-- Three load-balancing strategies behind one flag (`--router`), and a dense baseline with the same compute per
-  token to compare them against.
-- A script that measures which tokens each expert ends up handling.
+A Mixture-of-Experts (MoE) layer replaces a transformer's feed-forward network with many small networks called experts. A router sends each token to a few of them. The model holds more parameters than any one token uses, so it gets more capacity for the same compute per token.
+
+This repo builds that from the ground up:
+
+- A 6-layer decoder with DeepSeek-MoE style layers. Each layer has 16 small routed experts, and each token uses 4 of them plus 2 shared experts that every token goes through.
+- Three load-balancing routers, chosen with `--router`.
+- A Triton kernel that runs every expert's matrix multiply in one GPU launch, for the forward and the backward pass.
+- A dense baseline that does the same compute per token, to compare against.
+- Scripts that train the models, compare runs, sample text and measure what each expert ends up handling.
 
 ## Status
 
-The model, the three routers and the kernel are done and tested on CPU. CI runs the Triton kernels in Triton's
-interpreter and checks them against plain PyTorch, which tests correctness but not speed. The GPU part (the
-ablation runs and the kernel timings) hasn't been run yet, so there are no results here yet. That's next.
+The model, the routers and the kernel are finished and tested on CPU. The GPU experiments haven't been run, so the results section is empty for now.
 
-## Setup
+## How it works
+
+### The MoE layer
+
+| | MoE (default) | Dense baseline |
+|---|---|---|
+| Feed-forward | 16 routed experts of width 64, top 4, plus 2 shared | one SwiGLU of width 384 |
+| Total parameters | 6.97M | 3.41M |
+| Parameters used per token | 3.44M | 3.41M |
+
+The dense width is (2 shared + 4 routed) x 64 = 384. Both models do about the same work per token, so a gap in loss comes from the MoE having more experts to pick from.
+
+### Keeping the experts balanced
+
+A router left alone tends to send most tokens to a few experts, and the rest stop learning. Each router handles this differently.
+
+- `aux_loss` picks each token's top 4 experts from a softmax. It adds a loss term that grows as the load gets uneven. The term is 1.0 when every expert gets the same share and 4.0 when every token picks the same 4 experts. This is the method from Switch Transformer and GShard.
+- `aux_free` scores experts with a sigmoid. Each expert has a bias that is added only when picking the top 4. After every optimizer step, the bias goes up for experts that got too few tokens and down for the others. There is no extra loss. This is the method from DeepSeek-V3.
+- `expert_choice` lets each expert pick the tokens it scores highest, instead of each token picking experts. Every expert gets the same number of tokens by construction. This is the method from Zhou et al. (2022).
+
+Expert choice has a catch in a language model. Whether a token gets picked depends on the other tokens in the batch, including later tokens in the same sequence. The model can use that to see the future, so its validation loss looks better than it is. For expert-choice runs, `train.py` also logs `val_loss_token_choice`, the loss of the same model when each token picks its own top 4. The gap between the two numbers shows how much the model relied on future tokens. `tests/test_router.py` checks this directly. Under expert choice, changing later tokens changes the predictions for earlier ones. Under the other two routers, it doesn't.
+
+### The Triton kernel
+
+After routing, each token has 4 (token, expert) pairs. The pairs are sorted by expert, so each expert's tokens sit in one block of rows. The simple version, `--impl naive`, loops over the 16 experts in Python and runs two small matrix multiplies for each one. That is about a hundred small GPU launches per layer.
+
+The Triton version in `moe/kernels/` runs each matrix multiply for all experts in one launch:
+
+- Each GPU program computes one 64-row tile of output, and a tile never crosses from one expert to the next.
+- The map from tiles to experts is built on the GPU, so the CPU never waits to learn how many tokens each expert got.
+- Tiles read token rows straight from the unsorted activations, so the sorted copy is never written to memory.
+- The backward pass is Triton too, with a second kernel for the weight gradients.
+
+## Quick start on CPU
 
 ```bash
 git clone https://github.com/tanishvora-netizen/moe-from-scratch.git
 cd moe-from-scratch
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
 pytest -q
 ```
 
-Without an NVIDIA GPU, the tests run the kernel in Triton's CPU interpreter and training uses the plain PyTorch
-path. A short run on Shakespeare that finishes on a laptop:
+Without an NVIDIA GPU, the tests run the Triton kernels in Triton's CPU interpreter, and training uses the naive path. This run on Shakespeare finishes on a laptop:
 
 ```bash
 python scripts/train.py --dataset shakespeare --steps 200 --batch_size 16 --eval_interval 100 --impl naive
 ```
 
-## Running the experiment (one GPU)
+## Running on an NVIDIA GPU
+
+Triton only runs on Linux. On Windows, use WSL2.
+
+1. On Windows only, install Ubuntu under WSL2 from PowerShell, then restart:
+
+   ```bash
+   wsl --install -d Ubuntu
+   ```
+
+   Keep the normal NVIDIA driver for Windows. Don't install a GPU driver inside Ubuntu.
+
+2. Check that Linux sees the GPU:
+
+   ```bash
+   nvidia-smi
+   ```
+
+3. Follow the CPU quick start above. On Linux, `pip` installs a PyTorch build that includes CUDA and Triton.
+
+With a GPU, `pytest -q` compiles and runs the real kernels and checks them against plain PyTorch.
+
+## Experiments
+
+This command checks the kernel, times it, trains the dense baseline and the three routers, and then compares them:
 
 ```bash
-python scripts/benchmark.py     # checks Triton against the naive path, then times naive vs Triton vs dense
-bash scripts/run_ablations.sh   # dense + the 3 routers, then the comparison plot and expert analysis
+bash scripts/run_ablations.sh
 ```
 
-Or one step at a time:
+The same steps, one at a time:
 
 ```bash
+python scripts/benchmark.py
 python scripts/train.py --name dense             --ffn dense
 python scripts/train.py --name moe_aux_loss      --router aux_loss
 python scripts/train.py --name moe_aux_free      --router aux_free
@@ -57,112 +112,32 @@ python scripts/analyze_experts.py --ckpt runs/moe_aux_free/ckpt.pt
 python scripts/sample.py --ckpt runs/moe_aux_free/ckpt.pt --prompt "Once upon a time"
 ```
 
-Each run writes `runs/<name>/` with `config.json`, `metrics.jsonl`, `ckpt.pt` and a text sample, and
-`plot_runs.py` prints the final numbers as a Markdown table.
+By default, each run trains for 5000 steps at batch 64 with context 256, about 82M tokens, on the first 200 MB of TinyStories. Tokens are single bytes. Each run writes `runs/<name>/` with `config.json`, `metrics.jsonl`, `ckpt.pt` and a text sample.
 
-Defaults: the first 200 MB of TinyStories, byte-level tokens, context 256, batch 64, 5000 steps (about 82M
-tokens), AdamW with warmup and cosine decay, bf16 autocast. `--data_dir` trains on any directory that has
-`meta.json`, `train.bin` and `val.bin`.
+The logs record the validation loss, the load on each expert, and `maxvio`, the gap between the busiest expert's load and the average load, divided by the average. A `maxvio` of 0 means perfect balance. `analyze_experts.py` draws heatmaps of which kinds of bytes each expert handles, such as spaces, vowels or punctuation, and reports one number per layer for how specialized the experts are.
 
-## Model
+## Results
 
-| | MoE (default) | Dense baseline |
-|---|---|---|
-| d_model / layers / heads | 256 / 6 / 8 | 256 / 6 / 8 |
-| FFN | 16 routed experts (hidden 64), top-4, + 2 shared | SwiGLU, hidden 384 |
-| Total params | 6.97M | 3.41M |
-| Active params per token | 3.44M | 3.41M |
+Not run yet. `plot_runs.py` prints a Markdown table that goes here.
 
-The dense hidden size is (2 shared + 4 routed) x 64 = 384, so both models do about the same FFN compute per
-token. Any gap in loss comes from the MoE having more experts to choose from, not from doing more work.
-
-## Load balancing
-
-Left alone, a router tends to send most tokens to a few experts, and the others stop learning. The options:
-
-| `--router` | How it balances | From |
-|---|---|---|
-| `aux_loss` | softmax top-k plus a loss `E * sum_e(f_e * P_e)` with weight 0.01. It's 1 when load is even and E/k when every token goes to the same k experts | Switch Transformer, GShard |
-| `aux_free` | sigmoid scores. A per-expert bias is added only when picking the top k, and after each step it moves by +/- gamma toward experts that got fewer tokens. No extra loss | DeepSeek-V3 |
-| `expert_choice` | each expert picks its top C tokens, so load is even by construction | Zhou et al. 2022 |
-
-Expert choice has a catch in a language model. Whether a token gets picked depends on the scores of the other
-tokens in the batch, including later tokens in the same sequence, so during training the model gets to look at
-the future and its validation loss comes out better than it should. For these runs `train.py` also logs
-`val_loss_token_choice`, which evaluates the same model with ordinary per-token top-k routing. The gap between
-the two numbers is how much it was cheating. `tests/test_router.py` checks the leak directly: changing later
-tokens changes earlier logits under expert choice, and doesn't under the other two routers.
-
-What gets logged to `metrics.jsonl`:
-
-- `val_loss` on fixed validation windows, the same windows for every run
-- `maxvio` = (max expert load - mean load) / mean load, averaged over layers, where 0 is perfectly even. This is
-  the metric from the auxiliary-loss-free paper
-- per-layer `loads`, `dropped_frac` for expert choice (tokens that no expert picked), and `tok_per_s`
-
-`analyze_experts.py` adds heatmaps and a normalized mutual information, I(token; expert) / H(expert), per layer,
-as one number for how specialized the experts are. Byte-level tokens keep the heatmaps easy to read, since the
-categories are things like spaces, vowels, capitals and punctuation.
-
-## The Triton kernel
-
-After routing, each token has k (token, expert) pairs, and the expert part of the layer is:
-
-```
-sort pairs by expert -> grouped GEMM 1 (x @ W_gate_up[e], gather fused in)
-                     -> SwiGLU -> grouped GEMM 2 (@ W_down[e]) -> scale by gate, add back to each token
-```
-
-The naive path (`--impl naive`) loops over the 16 experts in Python and does a gather, two small matmuls and a
-scatter for each one. That's on the order of a hundred small kernel launches per layer, plus a host sync to read
-the expert offsets.
-
-The Triton path (`moe/kernels.py`) does each GEMM in one launch:
-
-- Each program computes a 64-row output tile, and tiles never cross an expert boundary, so a tile only reads one
-  expert's weights.
-- A tile schedule maps each tile to its expert and row range. It's built on the GPU with `searchsorted`, and the
-  kernel is launched with an upper bound of `ceil(M / 64) + E` tiles, so the CPU never waits to find out how many
-  tiles there really are. The extra tiles return immediately.
-- Tiles read token rows straight from the unpermuted activations, so the sorted copy of `x` is never written out.
-- Backward is Triton too. `dX` reuses the forward kernel with the weights read transposed through their strides,
-  and `dW[e] = X_e^T dY_e` is a second kernel that sums over each expert's rows.
-- `BLOCK_N`, `BLOCK_K`, warps and stages are autotuned per shape.
-
-One thing that has to be handled by hand: `torch.autocast` doesn't cast the inputs of a custom
-`autograd.Function`, so `GroupedGEMM` looks up the active autocast dtype itself and runs in bf16 when the rest of
-the model does.
-
-## Layout
+## Code layout
 
 ```
 moe/
-  config.py      ModelConfig, every hyperparameter, validated when it's created
-  layers.py      RMSNorm, causal attention with RoPE, SwiGLU
-  router.py      the three routers, all producing the same (token, expert) layout
-  kernels.py     Triton grouped-GEMM kernels and the autograd wrapper
-  moe_layer.py   the MoE layer, with the Triton path and the naive reference path
-  model.py       the transformer, parameter counting, checkpoint loading
-  data.py        Shakespeare / TinyStories download and tokenization
-scripts/
-  train.py, benchmark.py, analyze_experts.py, plot_runs.py, sample.py, run_ablations.sh, smoke_test.sh
-tests/
-  test_kernel.py                  kernel vs a PyTorch reference, forward and both gradients
-  test_moe.py                     Triton layer matches the naive layer for every router, model overfits a batch
-  test_router.py                  routing layout, balance-loss values, causality
-  test_checkpoint_and_config.py   checkpoint round trip, config validation
-  test_train_script.py            train.py end to end, then sample / analyze / plot on its output
+  config.py          ModelConfig: every model setting, checked when it's created
+  checkpoint.py      saving and loading ckpt.pt
+  model/             norm, rope, attention, swiglu, block, transformer
+  routing/           assignments (the layout all routers share), base, aux_loss, aux_free, expert_choice
+  experts/           layer (the MoE layer), naive (the Python loop), fused (the Triton path)
+  kernels/           tile_schedule, triton_kernels, grouped_gemm
+  data/              tokenizers, datasets, batches
+  training/          options, runtime, optimizer, evaluate, metrics, trainer
+  analysis/          specialization, runs, plots
+scripts/             train.py, benchmark.py, analyze_experts.py, plot_runs.py, sample.py,
+                     run_ablations.sh, smoke_test.sh
+tests/               the kernel against plain PyTorch, Triton against the naive path, the routers,
+                     checkpoints, and every script end to end
 ```
-
-## Next
-
-- [ ] Run the ablation on a GPU and put the results and plots here
-- [ ] Compare what the experts specialize in under each router
-- [ ] Kernel: fuse SwiGLU into the first GEMM, and the gate scaling and scatter-add into the second
-- [ ] Split the weight-gradient kernel along the token dimension, so one overloaded expert doesn't turn into the
-      slowest program in the launch
-- [ ] Try the aux-loss-free bias outside MoE, e.g. to even out slot usage in learned hash-table encoders, where
-      many inputs competing for one slot is the same problem as tokens piling onto one expert
 
 ## References
 
