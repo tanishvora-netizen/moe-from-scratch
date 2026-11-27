@@ -148,6 +148,8 @@ tests/               the kernel against plain PyTorch, Triton against the naive 
 - DeepSeek-AI. [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437). 2024.
 - Zhou et al. [Mixture-of-Experts with Expert Choice Routing](https://arxiv.org/abs/2202.09368). 2022.
 - Eldan, Li. [TinyStories](https://arxiv.org/abs/2305.07759). 2023.
+- Su et al. [RoFormer: Enhanced Transformer with Rotary Position Embedding](https://arxiv.org/abs/2104.09864). 2021.
+- Shazeer. [GLU Variants Improve Transformer](https://arxiv.org/abs/2002.05202). 2020.
 
 ## License
 
