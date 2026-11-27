@@ -17,9 +17,9 @@ import torch
 import triton
 
 from moe.config import ModelConfig
+from moe.experts.layer import MoELayer
 from moe.kernels import grouped_gemm
-from moe.layers import SwiGLU
-from moe.moe_layer import MoE
+from moe.model.swiglu import SwiGLU
 
 
 def parse_args():
@@ -55,9 +55,9 @@ def main():
     cfg = ModelConfig(d_model=args.d_model, n_heads=1, expert_hidden=args.expert_hidden,
                       n_routed_experts=args.n_experts, top_k=args.top_k,
                       n_shared_experts=args.n_shared, router="aux_loss", moe_impl="triton")
-    moe_t = MoE(cfg).to(dev)
+    moe_t = MoELayer(cfg).to(dev)
     moe_t.reset_parameters(0.02, 0.02)
-    moe_n = MoE(replace(cfg, moe_impl="naive")).to(dev)
+    moe_n = MoELayer(replace(cfg, moe_impl="naive")).to(dev)
     moe_n.load_state_dict(moe_t.state_dict())
     dense = SwiGLU(cfg.d_model, cfg.matched_dense_hidden).to(dev)
     print(f"d={cfg.d_model} E={cfg.n_routed_experts} k={cfg.top_k} h={cfg.expert_hidden} "
