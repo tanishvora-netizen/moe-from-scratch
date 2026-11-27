@@ -31,7 +31,7 @@ def build_model(args: argparse.Namespace, vocab_size: int, device: str) -> tuple
         n_routed_experts=args.n_experts, expert_hidden=args.expert_hidden, top_k=args.top_k,
         n_shared_experts=args.n_shared, first_k_dense=args.first_k_dense, router=args.router,
         aux_loss_coef=args.aux_loss_coef, bias_update_rate=args.bias_update_rate,
-        capacity_factor=args.capacity_factor, moe_impl=args.impl, dense_hidden=args.dense_hidden,
+        capacity_factor=args.capacity_factor, moe_impl=args.impl, dense_hidden=args.dense_hidden or None,
     )
     return MoETransformer(cfg).to(device), cfg
 
