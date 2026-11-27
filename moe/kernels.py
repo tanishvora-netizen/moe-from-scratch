@@ -225,14 +225,8 @@ def _compute_dtype(t: torch.Tensor) -> torch.dtype:
     A custom autograd.Function is not cast by autocast automatically, so we look up
     the active autocast dtype ourselves.
     """
-    if not t.is_cuda:
-        return t.dtype
-    try:  # torch >= 2.4: device-aware API (the no-argument form is deprecated)
-        if torch.is_autocast_enabled("cuda"):
-            return torch.get_autocast_dtype("cuda")
-    except TypeError:  # older torch: functions take no device argument
-        if torch.is_autocast_enabled():
-            return torch.get_autocast_gpu_dtype()
+    if t.is_cuda and torch.is_autocast_enabled("cuda"):
+        return torch.get_autocast_dtype("cuda")
     return t.dtype
 
 

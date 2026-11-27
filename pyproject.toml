@@ -13,7 +13,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Tanish Vora", email = "tanishvora@berkeley.edu" }]
 # On Linux, the torch wheel pulls in a matching triton. Triton only runs on NVIDIA GPUs
 # (or in its CPU interpreter for tests); everything else works on any machine.
-dependencies = ["torch>=2.3", "numpy"]
+dependencies = ["torch>=2.4", "numpy"]
 
 [project.optional-dependencies]
 data = ["datasets", "tiktoken"]   # TinyStories download, GPT-2 tokenizer
@@ -21,8 +21,8 @@ plot = ["matplotlib"]
 dev = ["pytest", "ruff"]
 all = ["moe-from-scratch[data,plot,dev]"]
 
-[tool.setuptools]
-packages = ["moe"]
+[tool.setuptools.packages.find]
+include = ["moe*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
