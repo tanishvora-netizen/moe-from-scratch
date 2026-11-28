@@ -18,7 +18,7 @@ This repo builds that from the ground up:
 
 ## Status
 
-The model, the routers and the kernel are finished and tested on CPU. The GPU experiments haven't been run, so the results section is empty for now.
+The model, the routers and the kernel are finished. The tests pass on CPU and on an RTX 3080 Ti, and the full experiment has been run once on that GPU. The results are below.
 
 ## How it works
 
@@ -118,7 +118,24 @@ The logs record the validation loss, the load on each expert, and `maxvio`, the 
 
 ## Results
 
-Not run yet. `plot_runs.py` prints a Markdown table that goes here.
+One run of each model on an RTX 3080 Ti with the default settings: 5,000 steps at batch 64 and context 256, about 82M bytes of TinyStories, seed 1337. Loss is the validation cross-entropy in nats per byte, on the same held-out windows for every run.
+
+| Run | Val loss | Causal val loss | MaxVio, last 10% of steps | Training speed (bytes/s) |
+|---|---|---|---|---|
+| dense | 0.6527 | | | 332K |
+| moe_aux_loss | 0.6371 | | 0.066 | 204K |
+| moe_aux_free | 0.6356 | | 0.049 | 205K |
+| moe_expert_choice | 0.6388 | 0.6467 | 0.000 | 227K |
+
+![Validation loss, load imbalance and training speed for the four runs](assets/ablation.png)
+
+- At the same compute per byte, all three MoE models reach a lower loss than the dense baseline. `aux_free` is lowest, 0.017 nats per byte (2.6%) below dense.
+- `aux_free` also keeps the experts more evenly loaded than `aux_loss`, with no extra loss term. Its busiest expert gets 4.9% more than the average, against 6.6%. The 0.0015 loss gap between these two routers is too small to rank them from one run each.
+- Expert choice is perfectly balanced, but its causal loss is the highest of the three MoE models. Its own loss is 0.008 lower, partly because it can use later tokens.
+- `analyze_experts.py` gives the specialization score, the normalized mutual information between the byte and the expert. It is 0 when routing ignores the byte and 1 when the byte alone picks the expert. It is highest in the first layers and lower in the deeper ones. For `aux_free` it is 0.25 in layer 0 and 0.09 and 0.13 in layers 4 and 5. The layer means are 0.17 for `aux_free`, 0.15 for `aux_loss` and 0.14 for expert choice.
+- The MoE models train about 40% slower per byte than dense. The experts are small (width 64), so routing and sorting cost more than the expert matrix multiplies save. Matched on training time instead of bytes, the dense model would see about 1.6 times more data.
+
+Each number comes from a single seed. Repeating the runs with other seeds would show how much of each gap is noise.
 
 ## Code layout
 
